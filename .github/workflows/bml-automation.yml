@@ -1,0 +1,47 @@
+name: HEAVEN BML System Automation
+
+on:
+  issues:
+    types: [opened, edited, labeled, unlabeled]
+  pull_request:
+    types: [opened, closed, merged]
+
+jobs:
+  bml-automation:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Auto-label new issues
+      if: github.event.action == 'opened' && github.event_name == 'issues'
+      run:  < /dev/null | 
+        # Add default status-backlog label to new issues
+        gh issue edit ${{ github.event.issue.number }} --add-label "status-backlog"
+        
+        # Add priority-medium as default if no priority exists
+        if \! gh issue view ${{ github.event.issue.number }} --json labels | grep -q "priority-"; then
+          gh issue edit ${{ github.event.issue.number }} --add-label "priority-medium"
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: PR to Measure Transition
+      if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
+      run: |
+        # Find issues linked to this PR and move them to measure status
+        echo "Moving linked issues to measure status after PR merge"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  attribution-check:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'issues' && github.event.action == 'opened'
+    
+    steps:
+    - name: Add BML Attribution
+      run: |
+        # Add attribution comment to new issues
+        gh issue comment ${{ github.event.issue.number }} --body "**Powered by HEAVEN BML System** | [Learn more](https://github.com/sancovp/heaven-bml-system)"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

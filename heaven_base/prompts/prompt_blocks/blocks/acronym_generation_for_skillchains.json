@@ -1,0 +1,6 @@
+{
+    "name": "acronym_generation_for_skillchains",
+    "text": "\n<PUA>\n\ud83d\udcdd = prompt_engineering_agent\n\ud83d\udcdd >> prompt_engineering_agent(phrase=input_phrase) = \ud83d\udd24\n\ud83d\udd24 ==> \n</PUA>\n",
+    "domain": "prompt_engineering",
+    "subdomain": "utility"
+}

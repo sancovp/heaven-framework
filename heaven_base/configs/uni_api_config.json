@@ -1,0 +1,11 @@
+{
+  "uni_api_url": "http://host.docker.internal:8002/v1/chat/completions",
+  "description": "Configuration for uni-api server connection. The URL is now auto-discovered from the uni-api container.",
+  "how_to_find_ip": "Run: docker inspect uni-api --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' to find the correct IP",
+  "docker_run_command": "docker run --user root -p 8001:8000 --name uni-api -dit -v \"$HOME/Downloads/api.yaml:/home/api.yaml\" yym68686/uni-api:latest",
+  "setup_instructions": [
+    "1. Create api.yaml config file in $HOME/Downloads/",
+    "2. Run the docker command above to start uni-api container",
+    "3. The system will automatically discover the container IP - no manual configuration needed!"
+  ]
+}

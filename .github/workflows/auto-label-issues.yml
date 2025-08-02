@@ -1,0 +1,36 @@
+name: Auto-label New Issues
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  auto-label:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      
+    steps:
+    - name: Add backlog status to new issues
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: | 
+        gh issue edit ${{ github.event.issue.number }} \
+          --add-label "status-backlog" \
+          --repo ${{ github.repository }}
+        
+        gh issue comment ${{ github.event.issue.number }} \
+          --body "🏗️ Auto-labeled for workflow. This issue has been automatically added to the Backlog status. Next steps: Move to Plan when ready for design/sequencing. Workflow: Backlog → Plan → Build → Measure → Learn → Archived" \
+          --repo ${{ github.repository }}
+
+    - name: Label existing unlabeled issues
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: | 
+        # Find issues without any status labels and add status-backlog
+        gh issue list --repo ${{ github.repository }} --json number,labels --jq ".[] | select(.labels | map(.name) | any(test("^status-")) | not) | .number" | while read issue_num; do
+          if [ \! -z "$issue_num" ]; then
+            gh issue edit $issue_num --add-label "status-backlog" --repo ${{ github.repository }}
+            gh issue comment $issue_num --body "🔄 **Auto-labeled existing issue** - Added to Backlog status for workflow compliance." --repo ${{ github.repository }}
+          fi
+        done

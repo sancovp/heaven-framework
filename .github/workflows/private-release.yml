@@ -1,0 +1,27 @@
+name: Private Auto-Release
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Generate release tag
+      id: tag
+      run: echo "tag=v$(date +%Y.%m.%d-%H%M%S)" >> $GITHUB_OUTPUT
+    
+    - name: Create prerelease
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release create ${{ steps.tag.outputs.tag }} \
+          --title "Private Release ${{ steps.tag.outputs.tag }}" \
+          --notes "Automated private release from main branch" \
+          --prerelease

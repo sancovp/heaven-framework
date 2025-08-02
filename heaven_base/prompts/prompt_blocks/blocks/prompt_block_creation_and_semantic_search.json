@@ -1,0 +1,6 @@
+{
+    "name": "prompt_block_creation_and_semantic_search",
+    "text": "\u270d\ufe0f = WritePromptBlockTool\n\ud83d\udd0d = SearchPromptBlocksTool\n\ud83d\udcdd = aggregator_agent\n\u270d\ufe0f >> WritePromptBlockTool(prompt_block_content=prompt_block_content) = \ud83c\udd95\n\ud83d\udd0d >> SearchPromptBlocksTool(query=prompt_block_content) = \ud83d\udd0e\n\ud83d\udcdd >> aggregator_agent(prompt_info=\ud83c\udd95, search_results=\ud83d\udd0e) = \ud83d\udce6\n\ud83d\udce6 ==> ",
+    "domain": "prompt_engineering",
+    "subdomain": "block_management"
+}

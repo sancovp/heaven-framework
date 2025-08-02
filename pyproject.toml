@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=61", "wheel", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "heaven-framework"
+version = "0.1.0"
+description = "HEAVEN - Hierarchical, Embodied, Autonomously Validating Evolution Network"
+readme = "README.md"
+authors = [
+    {name = "HEAVEN Team", email = "heaven@example.com"},
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "google-adk>=0.2.0",
+    "google-genai>=1.11.0",
+    "langchain-anthropic>=0.3.13",
+    "langchain-core>=0.3.65",
+    "langchain-deepseek>=0.1.2",
+    "langchain-google-genai>=2.1.5",
+    "langchain-groq>=0.2.4",
+    "langchain-openai>=0.3.22",
+    "langchain>=0.1.0",
+    "langgraph>=0.2.0",
+    "litellm>=1.67.5",
+    "pydantic==2.10.6",
+    "requests>=2.31.0",
+    "httpx>=0.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "black>=23.0",
+    "ruff>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/sancovp/heaven-framework"
+Repository = "https://github.com/sancovp/heaven-framework.git"
+Documentation = "https://heaven-framework.readthedocs.io"
+Issues = "https://github.com/sancovp/heaven-framework/issues"
+
+[tool.setuptools]
+packages = ["heaven_base"]
+package-dir = {"heaven_base" = "."}
+
+[tool.setuptools.package-data]
+heaven_base = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.black]
+line-length = 100
+target-version = ['py39']

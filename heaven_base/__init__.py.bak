@@ -1,0 +1,123 @@
+"""
+HEAVEN Base - Hierarchical, Embodied, Autonomously Validating Evolution Network
+Complete core framework for building autonomous AI agents.
+"""
+
+__version__ = "0.1.0"
+
+# Core agent classes
+from .baseheavenagent import (
+    BaseHeavenAgent,
+    BaseHeavenAgentReplicant,
+    HeavenAgentConfig,
+    DuoSystemConfig,
+    HookPoint,
+    HookContext,
+    HookRegistry
+)
+
+# Core tool classes
+from .baseheaventool import (
+    BaseHeavenTool,
+    ToolArgsSchema,
+    ToolResult,
+    ToolError,
+    CLIResult
+)
+
+# Unified chat interface
+from .unified_chat import (
+
+# Decorators
+from .decorators import heaven_tool, make_heaven_tool_from_function
+    UnifiedChat,
+
+# Decorators
+from .decorators import heaven_tool, make_heaven_tool_from_function
+    ProviderEnum
+
+# Decorators
+from .decorators import heaven_tool, make_heaven_tool_from_function
+)
+
+# Decorators
+from .decorators import heaven_tool, make_heaven_tool_from_function
+
+# Memory and history
+from .memory.history import (
+    History,
+    AgentStatus
+)
+from .memory.heaven_event import HeavenEvent
+from .memory.heaven_history import HeavenHistory
+from .memory.base_piece import BasePiece
+
+# Registry system
+from .registry.registry_tool import RegistryTool
+
+# Prompts system
+from .prompts.heaven_variable import RegistryHeavenVariable
+
+# Utils
+from .utils.name_utils import (
+    normalize_agent_name,
+    camel_to_snake,
+    pascal_to_snake,
+    to_pascal_case,
+    resolve_agent_name
+)
+
+# Tools
+from .tools.write_block_report_tool import WriteBlockReportTool
+
+__all__ = [
+    # Version
+    "__version__",
+    
+    # Agent classes
+    "BaseHeavenAgent",
+    "BaseHeavenAgentReplicant", 
+    "HeavenAgentConfig",
+    "DuoSystemConfig",
+    "HookPoint",
+    "HookContext",
+    "HookRegistry",
+    
+    # Tool classes
+    "BaseHeavenTool",
+    "ToolArgsSchema",
+    "ToolResult",
+    "ToolError",
+    "CLIResult",
+    
+    # Chat
+    "UnifiedChat",
+    
+    # Decorators
+    "heaven_tool",
+    "make_heaven_tool_from_function",
+    "ProviderEnum",
+    
+    # Memory
+    "History",
+    "AgentStatus",
+    "HeavenEvent",
+    "HeavenHistory",
+    "BasePiece",
+    
+    # Registry
+    "RegistryTool",
+    
+    # Prompts
+    "RegistryHeavenVariable",
+    
+    # Utils
+    "normalize_agent_name",
+    "camel_to_snake",
+    "pascal_to_snake",
+    "to_pascal_case",
+    "resolve_agent_name",
+    
+    # Tools
+    "WriteBlockReportTool"
+]

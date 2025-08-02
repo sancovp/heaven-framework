@@ -1,0 +1,6 @@
+{
+    "name": "blocked_workflow_reporting_and_escalation",
+    "text": "\ud83d\udea6 = blockage_detector_agent\n\ud83d\udcdd = WriteBlockReportTool\n\ud83d\udce8 = escalation_agent\n\ud83d\udea6 >> blockage_detector_agent(current_task=current_task, completed_tasks=completed_tasks) = \u2757\n\ud83d\udcdd >> WriteBlockReportTool(completed_tasks=completed_tasks, current_task=current_task, explanation=\u2757, blocked_reason=\u2757) = \ud83d\udcc4\n\ud83d\udce8 >> escalation_agent(block_report=\ud83d\udcc4) = \ud83d\udce7\n\ud83d\udce7 ==> ",
+    "domain": "workflow_management",
+    "subdomain": "error_reporting"
+}

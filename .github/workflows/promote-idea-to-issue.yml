@@ -1,0 +1,93 @@
+name: Promote Idea to Issue
+
+on:
+  workflow_dispatch:
+    inputs:
+      idea_file:
+        description: 'Path to idea file in /ideas/ directory (e.g., ideas/feature-x.md)'
+        required: true
+        type: string
+      title:
+        description: 'Issue title (optional - will extract from file if not provided)'
+        required: false
+        type: string
+      priority:
+        description: 'Issue priority'
+        required: true
+        type: choice
+        options:
+          - high
+          - medium
+          - low
+        default: medium
+
+jobs:
+  promote-idea:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Validate idea file exists
+      run:  < /dev/null | 
+        if [ \! -f "${{ inputs.idea_file }}" ]; then
+          echo "Error: Idea file '${{ inputs.idea_file }}' not found"
+          exit 1
+        fi
+        
+        if [[ \! "${{ inputs.idea_file }}" =~ ^ideas/.* ]]; then
+          echo "Error: File must be in /ideas/ directory"
+          exit 1
+        fi
+    
+    - name: Extract title and content
+      id: extract
+      run: |
+        IDEA_FILE="${{ inputs.idea_file }}"
+        
+        # Extract title - use input title or first line of file
+        if [ -n "${{ inputs.title }}" ]; then
+          TITLE="${{ inputs.title }}"
+        else
+          # Get first line and remove markdown heading markers
+          TITLE=$(head -n 1 "$IDEA_FILE" | sed 's/^#*\s*//')
+        fi
+        
+        # Extract content
+        CONTENT=$(cat "$IDEA_FILE")
+        
+        # Escape content for GitHub CLI
+        ESCAPED_CONTENT=$(echo "$CONTENT" | sed 's/"/\\"/g' | tr '\n' '\r')
+        
+        echo "title=$TITLE" >> $GITHUB_OUTPUT
+        echo "content=$ESCAPED_CONTENT" >> $GITHUB_OUTPUT
+        echo "filename=$(basename $IDEA_FILE)" >> $GITHUB_OUTPUT
+    
+    - name: Create GitHub issue
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        # Restore newlines and create issue body
+        BODY=$(echo "${{ steps.extract.outputs.content }}" | tr '\r' '\n')
+        ISSUE_BODY="**Promoted from idea file:** \`${{ inputs.idea_file }}\`
+
+---
+
+$BODY
+
+---
+
+**Metadata:**
+- Priority: ${{ inputs.priority }}
+- Source: Idea promotion workflow
+- Status: Backlog (ready for planning)"
+        
+        # Create the issue
+        gh issue create \
+          --title "${{ steps.extract.outputs.title }}" \
+          --body "$ISSUE_BODY" \
+          --label "idea-promotion,priority-${{ inputs.priority }},status-backlog" \
+          --repo ${{ github.repository }}

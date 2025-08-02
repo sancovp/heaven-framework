@@ -1,0 +1,6 @@
+{
+    "name": "prompt_block_quality_review_and_approval",
+    "text": "\n<prompt_engineering.block_quality_review.prompt_block_quality_review_and_approval>\n\ud83d\udd0d = SearchPromptBlocksTool\n\ud83d\udcdd = prompt_engineering_agent\n\u270d\ufe0f = WritePromptBlockTool\n\ud83d\udd0d >> SearchPromptBlocksTool(query=prompt_block_content) = \ud83d\udd0e\n\ud83d\udcdd >> prompt_engineering_agent(search_results=\ud83d\udd0e, proposed_content=prompt_block_content) = \u2705\n\u270d\ufe0f >> WritePromptBlockTool(prompt_block_content=\u2705) = \ud83c\udd95\n\ud83c\udd95 ==> \n</prompt_engineering.block_quality_review.prompt_block_quality_review_and_approval>\n",
+    "domain": "prompt_engineering",
+    "subdomain": "block_quality_review"
+}

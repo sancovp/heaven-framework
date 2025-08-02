@@ -1,0 +1,58 @@
+name: Sync to Meta Repository
+
+on:
+  issues:
+    types: [opened, edited, labeled, unlabeled, closed, reopened]
+  issue_comment:
+    types: [created]
+
+jobs:
+  sync-to-meta:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Get Issue Data
+      id: issue_data
+      run: |
+        # Prepare issue data for meta repo
+        ISSUE_TITLE="${{ github.event.issue.title }}"
+        ISSUE_NUMBER="${{ github.event.issue.number }}"
+        ISSUE_STATE="${{ github.event.issue.state }}"
+        # Store body in environment to avoid shell escaping issues
+        echo 'ISSUE_BODY<<EOF' >> $GITHUB_ENV
+        echo '${{ github.event.issue.body }}' >> $GITHUB_ENV
+        echo 'EOF' >> $GITHUB_ENV
+        
+        # Extract labels
+        LABELS=$(echo '${{ toJson(github.event.issue.labels) }}' | jq -r '.[].name' | tr '\n' ',')
+        
+        # Prepare webhook payload
+        echo "issue_title=$ISSUE_TITLE" >> $GITHUB_OUTPUT
+        echo "issue_number=$ISSUE_NUMBER" >> $GITHUB_OUTPUT
+        echo "source_repo=${{ github.repository }}" >> $GITHUB_OUTPUT
+        echo "labels=$LABELS" >> $GITHUB_OUTPUT
+    
+    - name: Trigger Meta Repo Sync
+      env:
+        META_REPO_TOKEN: ${{ secrets.META_REPO_TOKEN }}
+        META_REPO: ${{ vars.META_REPO_NAME }}
+      run: |
+        # Trigger workflow in meta repo
+        curl -X POST \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: token $META_REPO_TOKEN" \
+          https://api.github.com/repos/$META_REPO/dispatches \
+          -d @- << EOF
+        {
+          "event_type": "sync_issue",
+          "client_payload": {
+            "source_repo": "${{ github.repository }}",
+            "issue_number": "${{ steps.issue_data.outputs.issue_number }}",
+            "issue_title": "${{ steps.issue_data.outputs.issue_title }}",
+            "issue_state": "${{ github.event.issue.state }}",
+            "issue_body": $(echo "$ISSUE_BODY" | jq -Rs .),
+            "labels": "${{ steps.issue_data.outputs.labels }}",
+            "action": "${{ github.event.action }}"
+          }
+        }
+        EOF

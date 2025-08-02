@@ -1,0 +1,6 @@
+{
+    "name": "prompt_engineering_best_practices",
+    "text": "# Prompt Engineering Best Practices Guide\n\nWhen crafting prompts, follow these essential guidelines:\n\n1. Clarity and Specificity\n   - Be explicit about the desired outcome\n   - Use clear, unambiguous language\n   - Define the format of expected responses\n\n2. Context Management\n   - Provide relevant background information\n   - Set appropriate boundaries and constraints\n   - Include examples when helpful\n\n3. Role and Perspective\n   - Clearly define the AI's role\n   - Establish the interaction context\n   - Set the appropriate tone and style\n\n4. Structure and Organization\n   - Use consistent formatting\n   - Break complex tasks into smaller steps\n   - Include clear section markers\n\n5. Error Prevention\n   - Anticipate common misunderstandings\n   - Include validation criteria\n   - Provide fallback instructions\n\nRemember to test and iterate on prompts to ensure optimal performance.",
+    "domain": "prompt_engineering",
+    "subdomain": "best_practices"
+}

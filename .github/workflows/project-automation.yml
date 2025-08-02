@@ -1,0 +1,95 @@
+name: Project Board Automation
+
+on:
+  issues:
+    types: [opened, closed, labeled, unlabeled]
+  issue_comment:
+    types: [created]
+  pull_request:
+    types: [opened, closed, merged]
+
+jobs:
+  automate-project:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+      
+    steps:
+    - name: Move new issues to Backlog
+      if: github.event.action == 'opened' && github.event.issue
+      run:  < /dev/null | 
+        echo "New issue created - should be moved to Backlog status"
+        # Note: GitHub Projects v2 API automation is limited
+        # Manual project setup required for status changes
+    
+    - name: Check for blocked status requirements
+      if: contains(github.event.issue.labels.*.name, 'status-blocked')
+      run: |
+        # Verify that blocked issues have explanation
+        COMMENTS=$(gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments --jq '.[].body')
+        if [[ \! $COMMENTS == *"blocked"* ]] && [[ \! $COMMENTS == *"dependency"* ]] && [[ \! $COMMENTS == *"waiting"* ]]; then
+          gh issue comment ${{ github.event.issue.number }} --body "⚠️ **Blocked status requires explanation**
+
+Please add a comment explaining:
+- What is blocking this issue
+- What dependency needs to be resolved
+- Estimated timeline for unblocking
+
+Use keywords: blocked, dependency, waiting"
+        fi
+      env:
+        GH_TOKEN: ${{ github.token }}
+    
+    - name: Auto-archive completed issues
+      if: github.event.action == 'closed' && github.event.issue
+      run: |
+        echo "Issue closed - should be moved to Archived status"
+        # Note: Manual project board update required
+        
+    - name: Build-Measure-Learn workflow validation
+      if: github.event.action == 'labeled'
+      run: |
+        # Validate proper workflow progression
+        LABELS="${{ join(github.event.issue.labels.*.name, ' ') }}"
+        
+        # Cannot go from Backlog directly to Build
+        if [[ $LABELS == *"status-build"* ]] && [[ $LABELS \!= *"status-plan"* ]]; then
+          gh issue comment ${{ github.event.issue.number }} --body "❌ **Invalid workflow transition**
+
+Cannot move from Backlog directly to Build. 
+
+**Required workflow:** Backlog → Plan → Build → Measure → Learn
+
+Please move to Plan status first and ensure:
+- [ ] Issue is properly scoped
+- [ ] Dependencies identified  
+- [ ] Implementation approach defined
+- [ ] Acceptance criteria clear"
+        fi
+        
+        # Measure phase should follow Build
+        if [[ $LABELS == *"status-measure"* ]]; then
+          gh issue comment ${{ github.event.issue.number }} --body "📊 **Entered Measure phase**
+
+This issue is now in testing/validation. Please:
+- [ ] Test the implementation
+- [ ] Validate acceptance criteria
+- [ ] Document any issues found
+- [ ] Prepare for Learn phase transition"
+        fi
+        
+        # Learn phase captures insights
+        if [[ $LABELS == *"status-learn"* ]]; then
+          gh issue comment ${{ github.event.issue.number }} --body "🧠 **Entered Learn phase**
+
+Please document learnings and insights:
+- [ ] What worked well?
+- [ ] What could be improved?
+- [ ] Any new ideas generated?
+- [ ] Impact on future development?
+
+Tag with `learning-captured` when analysis complete."
+        fi
+      env:
+        GH_TOKEN: ${{ github.token }}

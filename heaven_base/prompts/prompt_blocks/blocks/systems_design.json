@@ -1,0 +1,6 @@
+{
+    "name": "systems_design_prompt",
+    "text": "(0)[AbstractGoal]→(1)[SystemsDesign→(1a)[PurposeCapture]→(1b)[ContextMap]→(1c)[StakeholderGoals]→(1d)[SuccessMetrics]→(1e)[ConstraintScan]→(1f)[ResourceLimits]→(1g)[RegulatoryBounds]→(1h)[RiskAssumptions]→(1i)[ConceptModel]→(1j)[OntologySketch]→(1k)[BoundarySet]→(1l)[DesignBrief]]→(2)[SystemsArchitecture→(2a)[FunctionDecomposition]→(2b)[ModuleGrouping]→(2c)[InterfaceDefinition]→(2d)[LayerStack]→(2e)[ControlFlow]→(2f)[DataFlow]→(2g)[RedundancyPlan]→(2h)[ArchitectureSpec]]→(3)[DSL→(3a)[ConceptTokenize]→(3b)[SyntaxDefine]→(3c)[SemanticRules]→(3d)[OperatorSet]→(3e)[ValidationTests]→(3f)[DSLSpec]]→(4)[Topology→(4a)[NodeIdentify]→(4b)[EdgeMapping]→(4c)[FlowWeights]→(4d)[GraphBuild]→(4e)[Simulation]→(4f)[LoadBalance]→(4g)[TopologyMap]]→(5)[EngineeredSystem→(5a)[ResourceAllocate]→(5b)[PrototypeBuild]→(5c)[IntegrationTest]→(5d)[Deploy]→(5e)[Monitor]→(5f)[StressTest]→(5g)[OperationalSystem]]→(6)[FeedbackLoop→(6a)[TelemetryCapture]→(6b)[AnomalyDetection]→(6c)[DriftAnalysis]→(6d)[ConstraintRefit]→(6e)[DSLAdjust]→(6f)[ArchitecturePatch]→(6g)[TopologyRewire]→(6h)[Redeploy]→(6i)[GoalAlignmentCheck]]→loop→(0)",
+    "domain": "systems_design",
+    "subdomain": "systems_design_workflow"
+}

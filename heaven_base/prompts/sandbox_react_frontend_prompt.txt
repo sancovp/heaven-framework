@@ -1,0 +1,94 @@
+I need help building a web frontend for an LLM chat application using shadCN and React. We'll be working in a sandbox container that's already running. Important context:
+
+1. Container Rules:
+- DO NOT use any destructive commands
+- DO NOT try to create/remove containers
+- Ask me to handle any container management
+- You can check container state but don't modify it
+
+2. Our Sandbox:
+- We have a running Ubuntu container for development
+- We'll use this as our development environment
+- We can verify its state but don't modify container lifecycle
+
+3. Project Goals:
+- Build a modern web frontend for LLM chat
+- Use shadCN for UI components
+- React for framework
+- Focus on frontend ONLY for now
+- We'll handle backend integration later
+
+4. Development Flow:
+- First verify environment
+- Set up React project
+- Integrate shadCN
+- Build chat interface
+- Style and polish UI
+
+Please help me start this project, beginning with environment verification and project setup. Remember: no destructive commands, and ask before making any significant changes.
+
+Current status:
+```
+LLM Chat UI Project Status
+Background
+We have successfully set up a development environment in the sandbox_test container with a modern React/TypeScript foundation. Key accomplishments:
+
+Environment Setup:
+
+Node.js and npm installed
+React/TypeScript project initialized with Vite
+Development dependencies configured
+Styling Infrastructure:
+
+Tailwind CSS installed and configured
+Custom utility functions created (cn helper)
+Global styles and theme variables established
+UI Framework:
+
+shadcn/ui components library integrated
+Required dependencies installed (clsx, tailwind-merge, etc.)
+Theme configuration completed with dark mode support
+Next Steps Instruction Set
+Chat Interface Structure
+
+/src
+├── components/
+│   ├── ui/               # shadcn components
+│   ├── chat/
+│   │   ├── ChatWindow   # Main chat display
+│   │   ├── MessageList  # Chat messages container
+│   │   ├── MessageItem  # Individual message component
+│   │   └── ChatInput    # Message input component
+│   └── layout/          # Layout components
+
+Component Implementation Priority: a. Create basic layout structure b. Implement ChatWindow container c. Build MessageList and MessageItem components d. Develop ChatInput component e. Add loading states and animations
+
+Type Definitions:
+
+interface Message {
+  id: string;
+  content: string;
+  role: 'user' | 'assistant';
+  timestamp: Date;
+}
+
+interface ChatState {
+  messages: Message[];
+  isLoading: boolean;
+  error?: string;
+}
+
+Styling Tasks:
+
+Implement responsive design
+Add dark/light theme toggle
+Style message bubbles
+Add transitions and animations
+Future Integration Points:
+
+Prepare API integration hooks
+Add WebSocket support for streaming
+Implement error handling
+Add message persistence
+This foundation will allow us to build a professional-grade chat interface that can be easily integrated with any LLM backend service.
+```

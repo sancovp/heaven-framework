@@ -1,0 +1,6 @@
+{
+    "name": "aggregate_multiple_skillchains",
+    "text": "\n<PROMPT_ENGINEERING.META_SKILLCHAIN_AGGREGATION.AGGREGATE_MULTIPLE_SKILLCHAINS>\n\ud83e\udde9 = prompt_engineering_agent\n\ud83d\uddc2\ufe0f = aggregator_agent\n\ud83e\udde9 >> prompt_engineering_agent(skillchain_blocks=input_blocks) = \ud83e\uddfe\n\ud83d\uddc2\ufe0f >> aggregator_agent(subchain_outputs=\ud83e\uddfe) = \ud83d\udce6\n\ud83d\udce6 ==> \n</PROMPT_ENGINEERING.META_SKILLCHAIN_AGGREGATION.AGGREGATE_MULTIPLE_SKILLCHAINS>\n",
+    "domain": "prompt_engineering",
+    "subdomain": "meta_skillchain_aggregation"
+}

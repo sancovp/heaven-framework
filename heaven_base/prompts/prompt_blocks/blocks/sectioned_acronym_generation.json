@@ -1,0 +1,6 @@
+{
+    "name": "sectioned_acronym_generation",
+    "text": "\n<PE.U.SAG>\n\ud83d\udcdd = prompt_engineering_agent\n\ud83d\udcdd >> prompt_engineering_agent(phrase=input_phrase, style=sectioned_acronym) = \ud83d\udd24\n\ud83d\udd24 ==> \n</PE.U.SAG>\n",
+    "domain": "prompt_engineering",
+    "subdomain": "utility"
+}

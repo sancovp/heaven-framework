@@ -1,0 +1,6 @@
+{
+    "name": "prompt_block_guide",
+    "text": "# Prompt Block Creation Guide\n\nWhen creating prompt blocks, follow these guidelines:\n\n1. Special Characters:\n   - Use \"quotes\" freely\n   - Handle 'single quotes' too\n   - Backslashes \\ need care\n   - Newlines should work\n   \n2. JSON Examples:\n   ```json\n   {\n       \"key\": \"value\",\n       \"nested\": {\n           \"array\": [1, 2, 3]\n       }\n   }\n   ```\n\n3. Code Blocks:\n   ```python\n   def example():\n       return \"This is a test\"\n   ```\n\n4. Unicode: \ud83d\ude80 \ud83d\udcbb \ud83e\udd16\n\n5. Template Variables:\n   ${variable}\n   {{jinja_variable}}\n   \n6. XML-like tags:\n<example>\n    <tag>content</tag>\n</example>\n\nRemember to test all these cases!",
+    "domain": "meta",
+    "subdomain": "prompt_creation"
+}
