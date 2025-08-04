@@ -3,8 +3,8 @@ OmniTool: dynamically invoke any registered tool by name.
 """
 import sys
 import importlib
-from computer_use_demo.tools.base.utils.agent_and_tool_lists import get_tool_modules
-from computer_use_demo.tools.base.baseheaventool import BaseHeavenTool, ToolArgsSchema
+from heaven_base.utils.agent_and_tool_lists import get_tool_modules
+from heaven_base.baseheaventool import BaseHeavenTool, ToolArgsSchema
 from typing import Dict, Any, Optional
 import asyncio, threading
 
@@ -27,14 +27,14 @@ def _ensure_loop():
 
     return None   # already had one
 
-def omnitool(tool_name: Optional[str] = None, list_tools: Optional[bool] = False, get_tool_info: Optional[bool] = False, **kwargs):
+async def omnitool(tool_name: Optional[str] = None, list_tools: Optional[bool] = False, get_tool_info: Optional[bool] = False, **kwargs):
     """
     Dynamically find, instantiate, and invoke a tool by class name or snake_case module name.
     """
     # DEFENSIVE PATTERN 1: Detect get_tool_info='list_tools' confusion
     if 'get_tool_info' in kwargs and kwargs['get_tool_info'] == 'list_tools':
         print("OMNITOOL DEFENSE: Auto-correcting get_tool_info='list_tools' to RetrieveToolInfoTool info")
-        return omnitool('RetrieveToolInfoTool', parameters={'tool_name': 'RetrieveToolInfoTool'})
+        return await omnitool('RetrieveToolInfoTool', parameters={'tool_name': 'RetrieveToolInfoTool'})
     
     # DEFENSIVE PATTERN 2: Detect get_tool_info without tool_name  
     if 'get_tool_info' in kwargs and tool_name is None:
@@ -42,10 +42,10 @@ def omnitool(tool_name: Optional[str] = None, list_tools: Optional[bool] = False
         return "ERROR: get_tool_info requires a tool_name parameter. Use list_tools=True to see available tools."
     
     if list_tools:
-        return omnitool('RetrieveToolInfoTool', parameters={'list_tools': True})
+        return await omnitool('RetrieveToolInfoTool', parameters={'list_tools': True})
 
     if get_tool_info and tool_name:
-        return omnitool('RetrieveToolInfoTool', parameters={'tool_name': tool_name})
+        return await omnitool('RetrieveToolInfoTool', parameters={'tool_name': tool_name})
     # Discover available tool class names (PascalCase)
     available = get_tool_modules()
 
@@ -64,7 +64,7 @@ def omnitool(tool_name: Optional[str] = None, list_tools: Optional[bool] = False
     module_name = ''.join(
         ('_' + c.lower() if c.isupper() else c) for c in tool_name
     ).lstrip('_')
-    full_module = f'computer_use_demo.tools.base.tools.{module_name}'
+    full_module = f'heaven_base.tools.{module_name}'
     mod = importlib.import_module(full_module)
 
     ToolClass = getattr(mod, tool_name)
@@ -77,28 +77,18 @@ def omnitool(tool_name: Optional[str] = None, list_tools: Optional[bool] = False
     import asyncio
 
     if asyncio.iscoroutinefunction(tool._arun):
-
-        _ensure_loop()                 # NEW
-
-        loop = asyncio.get_event_loop()
-        
-        
+        # Tool function is async - use await
         if 'parameters' in kwargs:
-            result = loop.run_until_complete(tool._arun(**kwargs['parameters']))
-            print(f"OMNITOOL DEBUG: sync result = {result}, type = {type(result)}") 
-            
+            result = await tool._arun(**kwargs['parameters'])
+            print(f"OMNITOOL DEBUG: async result = {result}, type = {type(result)}") 
         else:
-            result = loop.run_until_complete(tool._arun(**kwargs))
-            print(f"OMNITOOL DEBUG: sync result = {result}, type = {type(result)}")
-
+            result = await tool._arun(**kwargs)
+            print(f"OMNITOOL DEBUG: async result = {result}, type = {type(result)}")
     else:
-
-        _ensure_loop()                 # NEW – needed for neo4j driver
-
+        # Tool function is sync - call directly (works fine inside async function)
         if 'parameters' in kwargs:
             result = tool._arun(**kwargs['parameters'])
             print(f"OMNITOOL DEBUG: sync result = {result}, type = {type(result)}") 
-            
         else:
             result = tool._arun(**kwargs)
             print(f"OMNITOOL DEBUG: sync result = {result}, type = {type(result)}")
@@ -111,7 +101,7 @@ def omnitool(tool_name: Optional[str] = None, list_tools: Optional[bool] = False
 
     # Unwrap ToolResult if needed
     try:
-        from computer_use_demo.tools.base.baseheaventool import ToolResult
+        from heaven_base.baseheaventool import ToolResult
         if isinstance(result, ToolResult):
             for attr in ('result', 'output', 'value'):
                 if hasattr(result, attr):
