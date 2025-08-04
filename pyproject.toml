@@ -56,7 +56,6 @@ Issues = "https://github.com/sancovp/heaven-framework/issues"
 
 [tool.setuptools]
 packages = ["heaven_base"]
-package-dir = {"heaven_base" = "."}
 
 [tool.setuptools.package-data]
 heaven_base = ["py.typed"]
