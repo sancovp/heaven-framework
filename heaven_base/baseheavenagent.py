@@ -3059,7 +3059,7 @@ You must fix the error before proceeding."""
                 if output_callback:
                     output_callback(langchain_conversation_history[-1])
                 if heaven_main_callback:
-                    heaven_main_callback(assistant_message)
+                    heaven_main_callback(langchain_conversation_history[-1])
 
                 while assistant_message.get("tool_calls") and tool_call_count < self.max_tool_calls:
                     # execute the (single) tool call
@@ -3072,7 +3072,24 @@ You must fix the error before proceeding."""
                             ToolMessage(content=tm["content"], tool_call_id=tm["tool_call_id"])
                         )
 
+                    # Check if WriteBlockReportTool was called and auto-inject response
                     if self.blocked:
+                        # Extract the required response from WriteBlockReportTool result
+                        for tm in tool_messages:
+                            if tm.get("name") == "WriteBlockReportTool":
+                                response_msg = "I've created a block report and am waiting for the help I need"
+                                
+                                # Add to uni conversation layer
+                                uni_conversation_history.append({
+                                    "role": "assistant", 
+                                    "content": response_msg
+                                })
+                                
+                                # Add to langchain layer  
+                                langchain_conversation_history.append(
+                                    AIMessage(content=response_msg)
+                                )
+                                break
                         break
 
                     tool_result = self.unified_chat.invoke_uni_api(
@@ -3135,7 +3152,7 @@ You must fix the error before proceeding."""
                 if output_callback:
                     output_callback(langchain_conversation_history[-1])
                 if heaven_main_callback:
-                    heaven_main_callback(assistant_message)
+                    heaven_main_callback(langchain_conversation_history[-1])
 
             # ---------- 6.  Agent-mode bookkeeping ----------
             if self.goal and assistant_message.get("content"):
