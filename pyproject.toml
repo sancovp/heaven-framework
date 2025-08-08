@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "heaven-framework"
-version = "0.1.6"
+version = "0.1.7"
 description = "HEAVEN - Hierarchical, Embodied, Autonomously Validating Evolution Network"
 readme = "README.md"
 authors = [

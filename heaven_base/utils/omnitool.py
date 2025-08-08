@@ -47,8 +47,8 @@ async def omnitool(tool_name: Optional[str] = None, list_tools: Optional[bool] =
     if get_tool_info and tool_name:
         return await omnitool('RetrieveToolInfoTool', parameters={'tool_name': tool_name})
     # Discover available tool class names (PascalCase)
-    available = get_tool_modules()
-
+    available_str = get_tool_modules()
+    available = [tool.strip() for tool in available_str.split(',')]
 
     # Normalize to class name
     if tool_name not in available:
