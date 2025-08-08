@@ -53,6 +53,8 @@ async def omnitool(tool_name: Optional[str] = None, list_tools: Optional[bool] =
     # Normalize to class name
     if tool_name not in available:
         alt = ''.join(part.capitalize() for part in tool_name.split('_'))
+        if not alt.endswith('Tool'):
+            alt += 'Tool'
         if alt in available:
             tool_name = alt
         else:
