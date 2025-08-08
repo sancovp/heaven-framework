@@ -26,13 +26,30 @@ class SimpleRegistryService:
         os.makedirs(self.registry_dir, exist_ok=True)
     
     def _get_registry_path(self, registry_name: str) -> str:
-        """Get the file path for a registry."""
+        """Get the file path for a registry with dual-lookup (user dir first, then library)."""
         # Check if name ends with _registry, if not add it
         if registry_name.endswith('_registry'):
             filename = f"{registry_name}.json"
         else:
             filename = f"{registry_name}_registry.json"
-        return os.path.join(self.registry_dir, filename)
+        
+        # First check user's HEAVEN_DATA_DIR/registry/
+        user_path = os.path.join(self.registry_dir, filename)
+        if os.path.exists(user_path):
+            return user_path
+            
+        # Then check library-level heaven_base/registry/
+        try:
+            import heaven_base
+            library_registry_dir = os.path.join(os.path.dirname(heaven_base.__file__), 'registry')
+            library_path = os.path.join(library_registry_dir, filename)
+            if os.path.exists(library_path):
+                return library_path
+        except ImportError:
+            pass
+            
+        # Default to user path (for creation/writing)
+        return user_path
     
     def _load_registry_data(self, registry_name: str) -> Dict[str, Any]:
         """Load registry data from JSON file."""

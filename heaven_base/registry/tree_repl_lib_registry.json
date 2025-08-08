@@ -1,0 +1,15 @@
+{
+  "overview": "Complete development workflow for TreeShell (heaven-tree-repl) feature implementation. This sequence guides you through localized context analysis, surgical code changes, proper testing, documentation updates, and release management.",
+  "clone_repository": "Clone the TreeShell repository: git clone https://github.com/sancovp/heaven-tree-repl.git",
+  "create_feature_branch": "Create and checkout a feature branch: git checkout -b feature/your-feature-name",
+  "localize_context": "Localize the context for the feature request. This means finding the top level part of the code where the logic change will have to start (this should never be a param unless the request is specifically to change a param). Then, find the bottom level part of the code where the logic change will end. This is the localized context.",
+  "read_context_files": "Read all files in the localized context completely to understand the full flow and dependencies",
+  "implement_changes": "Make the code changes following existing patterns and conventions. When changing the way files save, are named, or the way classes or functions are defined, make sure to follow the patterns in the rest of the codebase. Ask the user if there is uncertainty. If the codebase looks like it is missing some principles in its patterns, make sure your changes actually reflect best practices, but do not make edits outside the localized context and avoid growing the changes necessary for the feature implementation from the feature request. Additionally, always make sure only to make changes to what needs to change. Dev install the library with pip install -e . and test your changes. Write your tests to ai_tests/{{module name or component name}}/{{functionality name}}_test.py (make directories if they dont exist), and include them in your commit later. These are just routine functionality tests, not testing framework tests. You only need to be able to directly observe the result you are expecting. Do not use prints for success, etc -- DIRECTLY observe (for example, print the actual result and find the proof you need. Not like `if result: print'I DID IT!')`",
+  "update_documentation": "Update documentation: README.md, CHANGELOG.md, or any relevant docs to reflect your changes. Document new features, API changes, or important behavior modifications. Go back through your code and make sure you are using Google docstrings syntax and correctly documenting all the code in the code so that docs can be autobuilt.",
+  "update_version": "Update version numbers: sed -i -E 's/version\\s*=\\s*\"[0-9.]+\"/version=\"1.2.3\"/' setup.py pyproject.toml",
+  "run_tests": "Test the changes if testing framework exists",
+  "stage_changes": "git add .",
+  "commit_changes": "git commit -m \"commit message here\"",
+  "push_branch": "git push origin feature/your-feature-name",
+  "create_pull_request": "Create pull request: gh pr create --title 'Your Feature Title' --body 'Description of changes'. All done! Your feature implementation is complete, tested, documented, and ready for review."
+}
