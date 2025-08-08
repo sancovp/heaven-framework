@@ -571,12 +571,27 @@ class History(BasePiece):
                 additional_kwargs = uni_msg.get("additional_kwargs", {})
                 
                 if uni_msg.get("tool_calls"):
+                    # Transform OpenAI format to LangChain format
+                    langchain_tool_calls = []
+                    for tc in uni_msg["tool_calls"]:
+                        if "function" in tc:
+                            # Convert OpenAI format to LangChain format
+                            langchain_tool_calls.append({
+                                "id": tc["id"],
+                                "name": tc["function"]["name"],
+                                "args": json.loads(tc["function"]["arguments"]),
+                                "type": "tool_call"
+                            })
+                        else:
+                            # Already in LangChain format
+                            langchain_tool_calls.append(tc)
+                    
                     # Merge tool_calls into additional_kwargs
                     additional_kwargs["tool_calls"] = uni_msg["tool_calls"]
                     messages.append(AIMessage(
                         content=content,
                         additional_kwargs=additional_kwargs,
-                        tool_calls=uni_msg["tool_calls"]
+                        tool_calls=langchain_tool_calls  # Use converted format
                     ))
                 else:
                     messages.append(AIMessage(content=content, additional_kwargs=additional_kwargs))

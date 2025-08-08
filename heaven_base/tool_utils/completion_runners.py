@@ -8,7 +8,7 @@ This module provides unified agent execution functions that support both:
 Automatically routes between local and Docker execution based on container differences.
 """
 
-from typing import Optional, Union, List, Type
+from typing import Optional, Union, List, Type, Callable
 from ..baseheavenagent import HeavenAgentConfig, BaseHeavenAgentReplicant
 from .hermes_utils import (
     exec_agent_run_locally_without_docker,
@@ -23,7 +23,8 @@ async def exec_agent_run(
     history_id: Optional[str] = None,
     remove_agents_config_tools: bool = False,
     orchestration_preprocess: bool = False,
-    system_prompt_suffix: Optional[str] = None
+    system_prompt_suffix: Optional[str] = None,
+    heaven_main_callback: Optional[Callable] = None
 ):
     """
     Completion-style agent execution that routes to local or Docker based on containers.
@@ -71,7 +72,8 @@ async def exec_agent_run(
             continuation=None,
             additional_tools=None,
             system_prompt_suffix=system_prompt_suffix,
-            agent_mode=False  # Always completion style
+            agent_mode=False,  # Always completion style
+            heaven_main_callback=heaven_main_callback
         )
     else:
         # Note: Docker execution requires agent to be string or None (not HeavenAgentConfig)
@@ -102,6 +104,7 @@ async def exec_completion_style(
     target_container: Optional[str] = None,
     source_container: Optional[str] = None,
     history_id: Optional[str] = None,
+    heaven_main_callback: Optional[Callable] = None,
     **kwargs
 ):
     """
@@ -123,6 +126,7 @@ async def exec_completion_style(
         agent=agent,
         target_container=target_container,
         history_id=history_id,
+        heaven_main_callback=heaven_main_callback,
         **kwargs
     )
 

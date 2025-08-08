@@ -1,0 +1,44 @@
+# Core HEAVEN Framework Dependencies
+google-adk>=0.2.0
+google-genai>=1.11.0
+langchain-anthropic>=0.3.13
+langchain-core>=0.3.65
+langchain-deepseek>=0.1.2
+langchain-google-genai>=2.1.5
+langchain-groq>=0.2.4
+langchain-openai>=0.3.22
+litellm>=1.67.5
+pydantic==2.10.6
+
+# LangGraph for workflow orchestration
+langgraph>=0.2.0
+
+# Additional langchain tools
+langchain>=0.1.0
+
+# Web requests and HTTP handling
+requests>=2.31.0
+httpx>=0.24.0
+
+# Token counting for precise context management
+tiktoken>=0.5.0
+
+# Code analysis and AST parsing (built-in but explicit for documentation)
+# ast (built-in)
+# subprocess (built-in) 
+# asyncio (built-in)
+
+# File handling and encoding
+# base64 (built-in)
+# pathlib (built-in)
+# json (built-in)
+
+# Optional advanced dependencies (commented out until needed)
+# neo4j>=5.0.0  # For graph database features
+# chromadb>=0.4.0  # For vector database features
+
+# Development dependencies
+pytest>=7.0
+pytest-asyncio>=0.21
+black>=23.0
+ruff>=0.1.0
