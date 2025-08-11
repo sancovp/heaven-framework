@@ -18,7 +18,6 @@ def retrieve_tool_info_util(tool_name: Optional[str] = None, list_tools: Optiona
         # Get actual tool information using the same pattern as omnitool
         try:
             import importlib
-            from ..utils.agent_and_tool_lists import get_tool_modules
             
             # Get available tools (same as omnitool)
             available = get_tool_modules()
