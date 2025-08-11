@@ -17,9 +17,7 @@ from pydantic import BaseModel, Field
 from langchain_core.tools import Tool
 
 # Import HEAVEN components
-import sys
-sys.path.append('/home/GOD/core')
-from computer_use_demo.tools.base.baseheaventool import BaseHeavenTool, ToolArgsSchema
+from heaven_base.baseheaventool import BaseHeavenTool, ToolArgsSchema
 
 
 def extract_docstring_info(func: Callable) -> Dict[str, Any]:
