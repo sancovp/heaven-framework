@@ -166,12 +166,14 @@ class RegistryTool(BaseHeavenTool):
        - Returns all key-value pairs in the specified registry
 
     5. add:
-       - Required: registry_name, key, value
+       - Required: registry_name, key, value_str OR value_dict
        - Adds a new key-value pair to the specified registry
+       - Use value_str for simple string values, value_dict for structured data
 
     6. update:
-       - Required: registry_name, key, value
+       - Required: registry_name, key, value_str OR value_dict
        - Updates an existing key with a new value in the specified registry
+       - Use value_str for simple string values, value_dict for structured data
 
     7. delete:
        - Required: registry_name, key
@@ -183,7 +185,8 @@ class RegistryTool(BaseHeavenTool):
 
     Examples:
     - Create a registry: operation="create_registry", registry_name="my_registry"
-    - Add an item: operation="add", registry_name="my_registry", key="item1", value="value1"
+    - Add a string item: operation="add", registry_name="my_registry", key="item1", value_str="value1"
+    - Add a dict item: operation="add", registry_name="my_registry", key="config", value_dict={"setting": "value"}
     - Get an item: operation="get", registry_name="my_registry", key="item1"
 
     Registry-reference syntax (any string field can be a pointer):

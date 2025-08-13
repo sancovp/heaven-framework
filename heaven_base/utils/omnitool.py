@@ -105,8 +105,12 @@ async def omnitool(tool_name: Optional[str] = None, list_tools: Optional[bool] =
     try:
         from heaven_base.baseheaventool import ToolResult
         if isinstance(result, ToolResult):
+            # Check for error first
+            if result.error:
+                return f"ERROR: {result.error}"
+            # Then check for successful output
             for attr in ('result', 'output', 'value'):
-                if hasattr(result, attr):
+                if hasattr(result, attr) and getattr(result, attr) is not None:
                     return getattr(result, attr)
             return result
     except ImportError:

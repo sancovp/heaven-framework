@@ -48,15 +48,22 @@ def retrieve_tool_info_util(tool_name: Optional[str] = None, list_tools: Optiona
             
             # Get args schema from the instantiated tool
             args_schema = None
-            if hasattr(tool, 'args_schema'):
-                args_schema = tool.args_schema
-            elif hasattr(ToolClass, 'args_schema') and ToolClass.args_schema:
+            if hasattr(ToolClass, 'args_schema') and ToolClass.args_schema:
                 try:
                     schema_instance = ToolClass.args_schema()
                     if hasattr(schema_instance, 'arguments'):
                         args_schema = schema_instance.arguments
                 except Exception as e:
                     args_schema = f"Error loading schema: {str(e)}"
+            elif hasattr(tool, 'args_schema'):
+                # Fallback: try to get from instantiated tool
+                try:
+                    if hasattr(tool.args_schema, 'arguments'):
+                        args_schema = tool.args_schema.arguments
+                    else:
+                        args_schema = "Schema format not recognized"
+                except:
+                    args_schema = "Error accessing tool schema"
             
             return {
                 "tool_name": tool_name,
