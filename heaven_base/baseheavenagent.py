@@ -3098,6 +3098,7 @@ You must fix the error before proceeding."""
                     assistant_message = tool_result["choices"][0]["message"]
                     
                     # ---------- 4.  Clamp again / MAX_TOOL_CALLS ----------
+                    cancelled_tools = []  # Initialize to prevent NameError
                     if tool_call_count + 1 >= self.max_tool_calls and assistant_message.get("tool_calls"):
                         cancelled_tools = [
                             f"{tc['function']['name']}({tc['function']['arguments']})"
