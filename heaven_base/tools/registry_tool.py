@@ -215,6 +215,18 @@ class RegistryTool(BaseHeavenTool):
 
     --> read-time result: "blue" (assuming that path exists)
 
+    registry_all_ref=<registry_name>
+
+    • Resolves to the entire contents of the specified registry.
+
+    • All values in the returned registry are also resolved if they contain pointers.
+
+    Example:
+
+    "my_data": "registry_all_ref=knowledge_base"
+
+    --> read-time result: {entire contents of knowledge_base registry}
+
     Rules & behaviour:
 
     • Write the reference exactly as a plain string—no braces, no quotes inside.

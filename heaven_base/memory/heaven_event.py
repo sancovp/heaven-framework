@@ -72,9 +72,13 @@ class HeavenEvent(BaseModel):
         )
 
     @classmethod
-    def from_langchain_message(cls, message: BaseMessage) -> List['HeavenEvent']:
-        """Convert a LangChain message to a HeavenEvent."""
+    def from_langchain_message(cls, message) -> List['HeavenEvent']:
+        """Convert a LangChain message or raw dict to a HeavenEvent."""
         events = []
+        
+        # Handle raw dict messages first
+        if isinstance(message, dict):
+            return cls._from_dict_message(message)
         
         # Handle System Messages
         if isinstance(message, SystemMessage):
@@ -227,6 +231,66 @@ class HeavenEvent(BaseModel):
     
         return events if events else [cls(event_type="UNKNOWN", data={"content": "Empty message"})]
 
+    @classmethod
+    def _from_dict_message(cls, message_dict: Dict[str, Any]) -> List['HeavenEvent']:
+        """Handle raw dict messages and convert to HeavenEvents."""
+        events = []
+        
+        # Handle tool calls in dict format
+        if 'tool_calls' in message_dict and message_dict['tool_calls']:
+            for tool_call in message_dict['tool_calls']:
+                if 'function' in tool_call:
+                    # OpenAI format in dict
+                    events.append(cls(
+                        event_type="TOOL_USE",
+                        data={
+                            "name": tool_call['function']['name'],
+                            "id": tool_call.get('id', ''),
+                            "input": _safe_parse_arguments(tool_call['function']['arguments']),
+                            "provider": "DICT"
+                        }
+                    ))
+                else:
+                    # Direct format in dict
+                    events.append(cls(
+                        event_type="TOOL_USE",
+                        data={
+                            "name": tool_call.get('name', 'unknown_tool'),
+                            "id": tool_call.get('id', ''),
+                            "input": tool_call.get('args', {}),
+                            "provider": "DICT"
+                        }
+                    ))
+        
+        # Handle content in dict format
+        content = message_dict.get('content', '')
+        if content and content.strip():
+            events.append(cls(
+                event_type="AGENT_MESSAGE",
+                data={"content": content}
+            ))
+        
+        # Handle role-based messages
+        role = message_dict.get('role', '')
+        if role == 'system':
+            events.append(cls(
+                event_type="SYSTEM_MESSAGE",
+                data={"content": content}
+            ))
+        elif role == 'user':
+            events.append(cls(
+                event_type="USER_MESSAGE", 
+                data={"content": content}
+            ))
+        elif role == 'assistant' and not message_dict.get('tool_calls'):
+            # Only create AGENT_MESSAGE if no tool calls (avoid duplicates)
+            if content and content.strip():
+                events.append(cls(
+                    event_type="AGENT_MESSAGE",
+                    data={"content": content}
+                ))
+        
+        return events if events else [cls(event_type="UNKNOWN", data=message_dict)]
   
     
     def to_langchain_message(self, provider: str = "ANTHROPIC") -> Optional[BaseMessage]:

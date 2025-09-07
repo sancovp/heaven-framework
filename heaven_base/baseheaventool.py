@@ -4,7 +4,11 @@ from dataclasses import dataclass, fields, replace
 from typing import Any, Dict, Optional, Type, Callable, ClassVar, Literal, List, Union
 from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackManagerForToolRun
 from langchain_core.runnables import RunnableConfig
-from pydantic import BaseModel, Field, create_model, Extra
+from pydantic import BaseModel, Field, create_model, ConfigDict
+try:
+    from pydantic import Extra  # For Pydantic 2.10.6
+except ImportError:
+    Extra = None  # For Pydantic 2.11+
 from langchain_core.tools import BaseTool, Tool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from abc import abstractmethod, ABC
@@ -68,8 +72,13 @@ class ToolUse:
 
 
 
-class ForbidExtraConfig:
-    extra = Extra.forbid
+if Extra is not None:
+    # Pydantic 2.10.6 style
+    class ForbidExtraConfig:
+        extra = Extra.forbid
+else:
+    # Pydantic 2.11+ style - will be used as ConfigDict
+    ForbidExtraConfig = ConfigDict(extra='forbid')
     
 
 @dataclass(kw_only=True, frozen=True)
@@ -314,8 +323,13 @@ class ToolArgsSchema(BaseModel):
 
         model_name = f"DynamicArgsSchema_{id(arguments)}"
         
-        return create_model(model_name, __config__=ForbidExtraConfig, **schema_fields) # THIS IS WORKING BUT COMMENTED OUT FOR ADK INTEGRATION
-        # return create_model(model_name, model_config={"extra": "allow"}, **schema_fields) # doesnt work for ADK...
+        # Handle both Pydantic 2.10.6 and 2.11+ syntax
+        if Extra is not None:
+            # Pydantic 2.10.6 - use __config__ with class
+            return create_model(model_name, __config__=ForbidExtraConfig, **schema_fields)
+        else:
+            # Pydantic 2.11+ - use model_config with ConfigDict
+            return create_model(model_name, model_config=ForbidExtraConfig, **schema_fields)
     
     @classmethod
     def _create_nested_model_recursive(cls, model_name: str, arg_definition: Dict[str, Any]) -> Type[BaseModel]:
@@ -374,11 +388,21 @@ class ToolArgsSchema(BaseModel):
             )
 
         # 3) Create & return the Pydantic model for this level
-        return create_model(
-            model_name,
-            __config__ = ForbidExtraConfig,
-            **schema_fields
-        )
+        # Handle both Pydantic 2.10.6 and 2.11+ syntax
+        if Extra is not None:
+            # Pydantic 2.10.6 - use __config__ with class
+            return create_model(
+                model_name,
+                __config__ = ForbidExtraConfig,
+                **schema_fields
+            )
+        else:
+            # Pydantic 2.11+ - use model_config with ConfigDict
+            return create_model(
+                model_name,
+                model_config = ForbidExtraConfig,
+                **schema_fields
+            )
    
     @classmethod
     def validate_arguments(cls, arguments: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:

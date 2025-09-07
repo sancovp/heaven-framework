@@ -47,6 +47,17 @@ from .memory.heaven_event import HeavenEvent
 from .memory.heaven_history import HeavenHistory
 from .memory.base_piece import BasePiece
 
+# Conversation management
+from .memory.conversations import (
+    ConversationManager,
+    start_chat,
+    continue_chat,
+    load_chat,
+    list_chats,
+    search_chats,
+    get_latest_history
+)
+
 # Registry system
 from .tools.registry_tool import RegistryTool
 
@@ -108,6 +119,9 @@ from .tools.mcp_session_tools import (
     connect_mcp_session, disconnect_mcp_session, get_mcp_session_status,
     ConnectMCPSessionTool, DisconnectMCPSessionTool, GetMCPSessionStatusTool
 )
+
+# CLI
+from .cli.heaven_cli import HeavenCLI, make_cli
 
 __all__ = [
     # Version
@@ -195,5 +209,8 @@ __all__ = [
     
     # MCP Session Management tools
     "connect_mcp_session", "disconnect_mcp_session", "get_mcp_session_status",
-    "ConnectMCPSessionTool", "DisconnectMCPSessionTool", "GetMCPSessionStatusTool"
+    "ConnectMCPSessionTool", "DisconnectMCPSessionTool", "GetMCPSessionStatusTool",
+    
+    # CLI
+    "HeavenCLI", "make_cli"
 ]

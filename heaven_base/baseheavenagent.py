@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from typing import List, Optional, Union, Any, Type, Dict
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage, ToolMessage
-from langchain_core.tools import BaseTool
+from langchain_core.tools import BaseTool, StructuredTool
 from langchain_core.utils.json_schema import dereference_refs
 from pydantic import BaseModel, Field, PrivateAttr
 from .unified_chat import UnifiedChat, ProviderEnum
@@ -310,7 +310,7 @@ class HeavenAgentConfig(BaseModel):
     """Enhanced configuration for GOD Framework Agent"""
     name: str = None
     system_prompt: str = ""
-    tools: List[Type[BaseHeavenTool]] = Field(default_factory=list)
+    tools: List[Union[Type[BaseHeavenTool], str, StructuredTool, BaseTool]] = Field(default_factory=list)
     provider: ProviderEnum = ProviderEnum.ANTHROPIC
     temperature: float = Field(default=0.7)
     max_tokens: int = 8000
@@ -327,6 +327,7 @@ class HeavenAgentConfig(BaseModel):
     _dna_last_mtime: Optional[float] = PrivateAttr(default=None)
     duo_system_config: DuoSystemConfig = Field(default_factory=DuoSystemConfig)
     context_window_config: Optional[Any] = None  # ContextWindowConfig - imported at runtime to avoid circular imports
+    mcp_servers: Optional[Dict[str, Dict[str, Any]]] = None  # MCP server configurations
     # hook_registry: HookRegistry = Field(default_factory=HookRegistry) # not sure this is right
   
     def _get_base_prompt(self):
@@ -752,7 +753,21 @@ class BaseHeavenAgent(ABC):
         self.additional_kw_instructions = config.additional_kw_instructions
         # Instantiate the tools
         self.resolved_tools = self.resolve_tools()
-        self.tools = [tool_class.create(adk) for tool_class in self.resolved_tools]  
+        self.tools = []
+        self.mcp_tool_strs = []  # Store MCP strings separately
+        for tool in self.resolved_tools:
+            if isinstance(tool, str) and tool.startswith("mcp__"):
+                # MCP tool string reference - store separately for later resolution
+                self.mcp_tool_strs.append(tool)
+            elif isinstance(tool, (StructuredTool, BaseTool)):
+                # Already a LangChain tool instance (e.g., from MCP)
+                # Just add it directly - same as BaseHeavenTool.create() output
+                self.tools.append(tool)
+            elif hasattr(tool, 'create'):
+                # BaseHeavenTool subclass - use its create method
+                self.tools.append(tool.create(adk))
+            else:
+                print(f"Unknown tool type: {tool}, skipping")  
         # Filter and prepare provider-specific parameters
 
         model_params = {
@@ -919,19 +934,175 @@ You must fix the error before proceeding."""
         
     def resolve_tools(self):
         """Ensure that certain default tools are always available to the agent."""
-        # Create a copy of the config_tools to avoid modifying the original
-        resolved_tools = list(self.config_tools)
+        resolved_tools = []
+        
+        # Process each tool in config
+        for tool in self.config_tools:
+            if isinstance(tool, str) and tool.startswith("mcp__"):
+                # MCP tool string reference - resolve to actual tool
+                # TODO: This will be async, for now just store the string
+                resolved_tools.append(tool)
+            else:
+                # Regular BaseHeavenTool class or instance
+                resolved_tools.append(tool)
         
         # Add WriteBlockReportTool if not already present
         if WriteBlockReportTool not in resolved_tools:
             resolved_tools.append(WriteBlockReportTool)
             
-        # You can add other default tools here following the same pattern
-        # For example:
-        # if AnotherDefaultTool not in resolved_tools:
-        #     resolved_tools.append(AnotherDefaultTool)
-            
         return resolved_tools
+    
+    async def resolve_mcps(self):
+        """Resolve MCP tool strings to actual LangChain tools and load MCP servers if configured"""
+        
+        # First, load tools from configured MCP servers (if any)
+        if self.config.mcp_servers:
+            await self.load_mcp_tools()
+        
+        # Then resolve individual MCP tool strings (if any)
+        if not hasattr(self, 'mcp_tool_strs') or not self.mcp_tool_strs:
+            return
+            
+        # Resolve each MCP tool string
+        for tool_ref in self.mcp_tool_strs:
+            mcp_tool = await self._resolve_mcp_tool(tool_ref)
+            if mcp_tool:
+                if isinstance(mcp_tool, list):  # "all" case
+                    self.tools.extend(mcp_tool)
+                else:
+                    self.tools.append(mcp_tool)
+        
+        # Clear the MCP strings now that they're resolved
+        self.mcp_tool_strs = []
+    
+    async def async_init(self):
+        """Async initialization - resolves MCP tools"""
+        if not hasattr(self, '_mcp_tools_to_resolve'):
+            return
+            
+        for tool_ref in self._mcp_tools_to_resolve:
+            mcp_tool = await self._resolve_mcp_tool(tool_ref)
+            if mcp_tool:
+                if isinstance(mcp_tool, list):  # "all" case
+                    self.tools.extend(mcp_tool)
+                else:
+                    self.tools.append(mcp_tool)
+        
+        # Clear the list
+        self._mcp_tools_to_resolve = []
+    
+    async def _resolve_mcp_tool(self, tool_ref: str):
+        """Resolve MCP tool string reference to actual StructuredTool"""
+        try:
+            # Parse tool reference: "mcp__filesystem__read_file"
+            parts = tool_ref.split("__")
+            if len(parts) != 3:
+                print(f"Invalid MCP tool reference format: {tool_ref}")
+                return None
+                
+            _, server_name, tool_name = parts
+            
+            # Create server config based on server name
+            server_config = self._get_mcp_server_config(server_name)
+            if not server_config:
+                print(f"No config found for MCP server: {server_name}")
+                return None
+            
+            # Use langchain_mcp_adapters to get tools
+            from langchain_mcp_adapters.client import MultiServerMCPClient
+            client = MultiServerMCPClient({server_name: server_config})
+            tools = await client.get_tools(server_name=server_name)
+            
+            # Find the specific tool
+            if tool_name == "all":
+                return tools
+            else:
+                for tool in tools:
+                    if tool.name == tool_name:
+                        return tool
+                        
+                print(f"Tool '{tool_name}' not found in server '{server_name}'. Available: {[t.name for t in tools]}")
+                return None
+                
+        except Exception as e:
+            print(f"Error resolving MCP tool {tool_ref}: {e}")
+            return None
+    
+    def _get_mcp_server_config(self, server_name: str):
+        """Get MCP server config by name from JSON config file"""
+        configs = self._load_mcp_configs()
+        return configs.get(server_name)
+    
+    def _load_mcp_configs(self):
+        """Load MCP server configurations from JSON file"""
+        import json
+        from .utils.get_env_value import EnvConfigUtil
+        
+        # Ensure config file exists
+        config_path = self._ensure_mcp_config_file()
+        
+        try:
+            with open(config_path, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading MCP config from {config_path}: {e}")
+            return {}
+    
+    def _ensure_mcp_config_file(self):
+        """Ensure MCP config file exists in HEAVEN_DATA_DIR with defaults"""
+        import json
+        import os
+        from .utils.get_env_value import EnvConfigUtil
+        
+        # Get HEAVEN_DATA_DIR and create heaven_mcp_config.json path
+        heaven_data_dir = EnvConfigUtil.get_heaven_data_dir()
+        config_path = os.path.join(heaven_data_dir, "heaven_mcp_config.json")
+        
+        # Create default config if file doesn't exist
+        if not os.path.exists(config_path):
+            default_config = {
+                "filesystem": {
+                    "command": "npx",
+                    "args": ["@modelcontextprotocol/server-filesystem", "/tmp"],
+                    "transport": "stdio"
+                }
+            }
+            
+            # Ensure directory exists
+            os.makedirs(heaven_data_dir, exist_ok=True)
+            
+            # Write default config
+            with open(config_path, 'w') as f:
+                json.dump(default_config, f, indent=2)
+            
+            print(f"Created default MCP config at: {config_path}")
+        
+        return config_path
+    
+    async def load_mcp_tools(self):
+        """Load MCP tools from configured servers and add them to the agent's tools list"""
+        if not self.config.mcp_servers:
+            return
+        
+        try:
+            from langchain_mcp_adapters.client import MultiServerMCPClient
+            
+            # Create client with server configs
+            client = MultiServerMCPClient(self.config.mcp_servers)
+            
+            # Get all tools from all servers
+            mcp_langchain_tools = await client.get_tools()
+            
+            # Just add the LangChain tools directly to the tools list
+            for lc_tool in mcp_langchain_tools:
+                self.tools.append(lc_tool)
+                
+            logging.info(f"Loaded {len(mcp_langchain_tools)} MCP tools from {len(self.config.mcp_servers)} servers")
+            
+        except ImportError as e:
+            logging.warning(f"Could not import langchain_mcp_adapters: {e}")
+        except Exception as e:
+            logging.error(f"Error loading MCP tools: {e}")
 
 
     def to_base_tools(self) -> List[BaseTool]:
@@ -2548,18 +2719,32 @@ You must fix the error before proceeding."""
 
     
     def _prepare_tools_for_uni_api(self) -> List[Dict[str, Any]]:
-        """Convert HEAVEN tools to OpenAI format for uni-api"""
+        """Convert HEAVEN and LangChain tools to OpenAI format for uni-api"""
         if not self.tools:
             return []
         
         openai_tools = []
         for tool in self.tools:
-            if hasattr(tool, 'get_openai_function'):
-                try:
+            try:
+                if hasattr(tool, 'get_openai_function'):
+                    # HEAVEN tool with get_openai_function method
                     openai_tool = tool.get_openai_function()
                     openai_tools.append(openai_tool)
-                except Exception as e:
-                    print(f"Error converting tool {tool.name} to OpenAI format: {e}")
+                elif hasattr(tool, 'args_schema') and hasattr(tool, 'name'):
+                    # LangChain StructuredTool - convert schema to OpenAI format
+                    from langchain_core.utils.function_calling import convert_to_openai_function
+                    function_schema = convert_to_openai_function(tool)
+                    # Wrap in proper OpenAI tool format
+                    openai_tool = {
+                        "type": "function",
+                        "function": function_schema
+                    }
+                    openai_tools.append(openai_tool)
+                else:
+                    print(f"Unknown tool type, skipping: {tool}")
+            except Exception as e:
+                tool_name = getattr(tool, 'name', str(type(tool)))
+                print(f"Error converting tool {tool_name} to OpenAI format: {e}")
         
         return openai_tools
 
@@ -2581,21 +2766,36 @@ You must fix the error before proceeding."""
                 
                 print(f"🔧 DEBUG: Extracted tool_id='{tool_id}', tool_name='{tool_name}'")
                 
-                # Find matching HEAVEN tool
-                matching_tools = [
-                    tool for tool in self.tools 
-                    if tool.base_tool.name.lower() == tool_name.lower()
-                ]
+                # Find matching tool (HEAVEN or LangChain)
+                matching_tools = []
+                for tool in self.tools:
+                    if hasattr(tool, 'base_tool'):
+                        # HEAVEN tool
+                        if tool.base_tool.name.lower() == tool_name.lower():
+                            matching_tools.append(tool)
+                    elif hasattr(tool, 'name'):
+                        # LangChain tool (StructuredTool)
+                        if tool.name.lower() == tool_name.lower():
+                            matching_tools.append(tool)
                 
                 if matching_tools:
                     tool = matching_tools[0]
                     
-                    # Execute the tool
-                    tool_result = await tool._arun(**tool_args)
-                    if tool_output_callback:
-                        tool_output_callback(tool_result, tool_id)
-                    # Convert result to uni-api tool message format
-                    tool_content = str(tool_result.error) if tool_result.error else str(tool_result.output)
+                    # Execute the tool differently based on type
+                    if hasattr(tool, 'base_tool'):
+                        # HEAVEN tool - returns ToolResult
+                        tool_result = await tool._arun(**tool_args)
+                        if tool_output_callback:
+                            tool_output_callback(tool_result, tool_id)
+                        tool_content = str(tool_result.error) if tool_result.error else str(tool_result.output)
+                    else:
+                        # LangChain tool - returns raw content
+                        from langchain_core.runnables import RunnableConfig
+                        config = RunnableConfig()
+                        raw_result = await tool._arun(config=config, **tool_args)
+                        if tool_output_callback:
+                            tool_output_callback(raw_result, tool_id)
+                        tool_content = str(raw_result)
                     
                     tool_message = {
                         "role": "tool",
@@ -3014,6 +3214,9 @@ You must fix the error before proceeding."""
             uni_conversation_history.append({"role": "user", "content": prompt})
             langchain_conversation_history.append(HumanMessage(content=prompt))
             self._detect_agent_command(prompt)
+
+        # Resolve MCP tools before preparing for API
+        await self.resolve_mcps()
 
         openai_tools = self._prepare_tools_for_uni_api()
         self.blocked = False
@@ -3619,8 +3822,8 @@ def get_agent_by_name(agent_name: str) -> Union[BaseHeavenAgent, BaseHeavenAgent
 
     # --- Try Replicant approach first ---
     try:
-        # Construct path based on normalized name
-        module_path = f"computer_use_demo.tools.base.agents.{agent_name_snake}.{agent_name_snake}"
+        # Construct path based on normalized name - use heaven-framework paths
+        module_path = f"heaven_base.agents.{agent_name_snake}.{agent_name_snake}"
         print(f"[get_agent_by_name] Trying Replicant module: {module_path}")
         agent_module = importlib.import_module(module_path)
 
@@ -3653,9 +3856,9 @@ def get_agent_by_name(agent_name: str) -> Union[BaseHeavenAgent, BaseHeavenAgent
     # --- If Replicant failed, try config approach ---
     print(f"[get_agent_by_name] Trying Config approach for {agent_name_snake}...")
     try:
-        # Construct path and config object name based on normalized name
+        # Construct path and config object name based on normalized name - use heaven-framework paths
         config_object_name = f"{agent_name_snake}_config"
-        config_module_path = f"computer_use_demo.tools.base.agents.{agent_name_snake}.{config_object_name}"
+        config_module_path = f"heaven_base.agents.{config_object_name}"
         print(f"[get_agent_by_name] Trying Config module: {config_module_path}")
 
         config_module = importlib.import_module(config_module_path)

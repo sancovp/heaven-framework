@@ -8,6 +8,7 @@ from ..utils.get_env_value import EnvConfigUtil
 # Registry pointer patterns  
 REF_KEY_PATTERN = re.compile(r'^registry_key_ref=([^:]+):(.+)$')
 REF_OBJ_PATTERN = re.compile(r'^registry_object_ref=([^:]+):(.+)$')
+REF_ALL_PATTERN = re.compile(r'^registry_all_ref=([^:]+)$')
 MAX_REF_DEPTH = 99
 
 
@@ -101,6 +102,14 @@ class SimpleRegistryService:
             _seen.add(ref)
             obj = self.get(registry_name, key)  # may itself be a pointer
             return self._resolve_if_pointer(obj, _seen=_seen)
+        
+        # registry_all_ref → fetch entire registry contents
+        m = REF_ALL_PATTERN.match(ref)
+        if m:
+            registry_name = m.group(1)
+            _seen.add(ref)
+            all_data = self.get_all(registry_name)  # may contain pointers that get resolved
+            return all_data
         
         # not a recognised pointer
         return value

@@ -55,7 +55,21 @@ Documentation = "https://heaven-framework.readthedocs.io"
 Issues = "https://github.com/sancovp/heaven-framework/issues"
 
 [tool.setuptools]
-packages = ["heaven_base"]
+packages = [
+    "heaven_base",
+    "heaven_base.agents", 
+    "heaven_base.agents.summary_agent",
+    "heaven_base.cli",
+    "heaven_base.configs", 
+    "heaven_base.langgraph",
+    "heaven_base.memory",
+    "heaven_base.progenitor",
+    "heaven_base.prompts",
+    "heaven_base.registry",
+    "heaven_base.tools",
+    "heaven_base.tool_utils",
+    "heaven_base.utils"
+]
 
 [tool.setuptools.package-data]
 heaven_base = ["py.typed"]

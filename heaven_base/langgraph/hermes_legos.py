@@ -35,6 +35,7 @@ class HermesState(TypedDict):
     extracted_content: Dict[str, Any]
     iteration_count: int
     max_iterations: int
+    hermes_result: Optional[Dict[str, Any]]  # Result from hermes_node execution
     
 class ChainState(TypedDict):
     """State for agent chains"""
@@ -86,10 +87,12 @@ async def completion_node(state: HermesState) -> Dict[str, Any]:
 
 async def hermes_node(state: HermesState) -> Dict[str, Any]:
     """
-    Node that executes an agent using hermes_step.
-    Orchestrated execution with history tracking.
+    Node that executes an agent using hermes_step with block report handling.
+    This is the complete hermes execution pipeline.
     """
-    # Execute using hermes_step
+    print("=== HERMES_NODE CALLED ===")
+    print(f"State keys: {state.keys()}")
+    
     result = await hermes_step(
         target_container="mind_of_god",
         source_container="mind_of_god",
@@ -98,31 +101,12 @@ async def hermes_node(state: HermesState) -> Dict[str, Any]:
         agent=state.get("agent_config")
     )
     
-    # Extract HEAVEN events from result
-    new_events = []
-    if isinstance(result, dict):
-        # Process the raw_result if available
-        raw_result = result.get("raw_result", {})
-        messages = raw_result.get("messages", [])
-        
-        for msg in messages:
-            if hasattr(msg, "content"):
-                event_type = "USER_MESSAGE" if isinstance(msg, HumanMessage) else "AGENT_MESSAGE"
-                event = HeavenEvent(
-                    event_type=event_type,
-                    data={"content": msg.content}
-                )
-                new_events.append(event.to_dict())
+    print(f"hermes_step result type: {type(result)}")
     
-    # Update state
-    return {
-        "heaven_events": state["heaven_events"] + new_events,
-        "extracted_content": {
-            **state["extracted_content"],
-            **result.get("extracted_content", {})
-        },
-        "iteration_count": state["iteration_count"] + 1
-    }
+    return_value = {"hermes_result": result}
+    print(f"Returning: {return_value.keys()}")
+    
+    return return_value
 
 
 async def hermes_config_node(state: HermesState, config: HermesConfig, variable_inputs: Dict[str, Any]) -> Dict[str, Any]:
@@ -232,85 +216,85 @@ def should_continue_chain(state: ChainState) -> str:
 
 # === GRAPH BUILDERS ===
 
-def build_simple_hermes_graph(agent_config: HeavenAgentConfig) -> StateGraph:
-    """
-    Build a simple graph that executes an agent once.
-    """
-    graph = StateGraph(HermesState)
-    
-    # Add nodes
-    graph.add_node("execute", completion_node)
-    
-    # Add edges
-    graph.add_edge(START, "execute")
-    graph.add_edge("execute", END)
-    
-    return graph.compile()
+# def build_simple_hermes_graph(agent_config: HeavenAgentConfig) -> StateGraph:
+#     """
+#     Build a simple graph that executes an agent once.
+#     """
+#     graph = StateGraph(HermesState)
+#     
+#     # Add nodes
+#     graph.add_node("execute", completion_node)
+#     
+#     # Add edges
+#     graph.add_edge(START, "execute")
+#     graph.add_edge("execute", END)
+#     
+#     return graph.compile()
 
 
-def build_iterative_hermes_graph(agent_config: HeavenAgentConfig, max_iterations: int = 3) -> StateGraph:
-    """
-    Build a graph that can iterate multiple times.
-    """
-    graph = StateGraph(HermesState)
-    
-    # Add nodes
-    graph.add_node("hermes_execute", hermes_node)
-    
-    # Add conditional edges
-    graph.add_edge(START, "hermes_execute")
-    graph.add_conditional_edges(
-        "hermes_execute",
-        should_continue_iterations,
-        {
-            "continue": "hermes_execute",
-            "end": END
-        }
-    )
-    
-    return graph.compile()
+# def build_iterative_hermes_graph(agent_config: HeavenAgentConfig, max_iterations: int = 3) -> StateGraph:
+#     """
+#     Build a graph that can iterate multiple times.
+#     """
+#     graph = StateGraph(HermesState)
+#     
+#     # Add nodes
+#     graph.add_node("hermes_execute", hermes_node)
+#     
+#     # Add conditional edges
+#     graph.add_edge(START, "hermes_execute")
+#     graph.add_conditional_edges(
+#         "hermes_execute",
+#         should_continue_iterations,
+#         {
+#             "continue": "hermes_execute",
+#             "end": END
+#         }
+#     )
+#     
+#     return graph.compile()
 
 
-def build_agent_chain_graph(agents: List[HeavenAgentConfig]) -> StateGraph:
-    """
-    Build a graph that chains multiple agents together.
-    """
-    graph = StateGraph(ChainState)
-    
-    # Add controller node
-    graph.add_node("chain_controller", chain_controller_node)
-    
-    # Add edges
-    graph.add_edge(START, "chain_controller")
-    graph.add_conditional_edges(
-        "chain_controller",
-        should_continue_chain,
-        {
-            "continue": "chain_controller",
-            "end": END
-        }
-    )
-    
-    return graph.compile()
+# def build_agent_chain_graph(agents: List[HeavenAgentConfig]) -> StateGraph:
+#     """
+#     Build a graph that chains multiple agents together.
+#     """
+#     graph = StateGraph(ChainState)
+#     
+#     # Add controller node
+#     graph.add_node("chain_controller", chain_controller_node)
+#     
+#     # Add edges
+#     graph.add_edge(START, "chain_controller")
+#     graph.add_conditional_edges(
+#         "chain_controller",
+#         should_continue_chain,
+#         {
+#             "continue": "chain_controller",
+#             "end": END
+#         }
+#     )
+#     
+#     return graph.compile()
 
 
-def build_config_template_graph(config: HermesConfig, variable_inputs: Dict[str, Any]) -> StateGraph:
-    """
-    Build a graph that uses HermesConfig templates.
-    """
-    graph = StateGraph(HermesState)
-    
-    # Create node with config bound
-    config_node = partial(hermes_config_node, config=config, variable_inputs=variable_inputs)
-    
-    # Add nodes
-    graph.add_node("template_execute", config_node)
-    
-    # Add edges
-    graph.add_edge(START, "template_execute")
-    graph.add_edge("template_execute", END)
-    
-    return graph.compile()
+# def build_config_template_graph(config: HermesConfig, variable_inputs: Dict[str, Any]) -> StateGraph:
+#     """
+#     Build a graph that uses HermesConfig templates.
+#     """
+#     graph = StateGraph(HermesState)
+#     
+#     # Create node with config bound
+#     config_node = partial(hermes_config_node, config=config, variable_inputs=variable_inputs)
+#     
+#     # Add nodes
+#     graph.add_node("template_execute", config_node)
+#     
+#     # Add edges
+#     graph.add_edge(START, "template_execute")
+#     graph.add_edge("template_execute", END)
+#     
+#     return graph.compile()
 
 
 # === UTILITY FUNCTIONS ===

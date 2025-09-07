@@ -12,6 +12,8 @@ from .token_counter import count_tokens, count_tokens_in_messages
 # Model context window limits (in tokens)
 MODEL_LIMITS = {
     # OpenAI models
+    "gpt-5": 400000,
+    "gpt-5-mini": 400000,
     "gpt-4o": 128000,
     "gpt-4o-mini": 128000,
     "gpt-4-turbo": 128000,

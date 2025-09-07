@@ -210,11 +210,33 @@ async def exec_agent_run_locally_without_docker(
                 replicant_success = False
                 
                 try:
-                    # Basic module path
-                    module_path = f"computer_use_demo.tools.base.agents.{agent_name.lower()}.{agent_name.lower()}"
-                    # print(f"Importing from: {{module_path}}")
+                    # Try HEAVEN_DATA_DIR first, then heaven_base library
+                    module_path = None
+                    agent_module = None
                     
-                    agent_module = importlib.import_module(module_path)
+                    # Try HEAVEN_DATA_DIR/agents/ first
+                    heaven_data_dir = os.environ.get('HEAVEN_DATA_DIR')
+                    if heaven_data_dir:
+                        custom_agent_path = os.path.join(heaven_data_dir, 'agents', agent_name.lower())
+                        if os.path.exists(custom_agent_path):
+                            for filename in os.listdir(custom_agent_path):
+                                if filename.endswith('.py') and not filename.startswith('__'):
+                                    try:
+                                        spec = importlib.util.spec_from_file_location(
+                                            filename[:-3], os.path.join(custom_agent_path, filename)
+                                        )
+                                        agent_module = importlib.util.module_from_spec(spec)
+                                        spec.loader.exec_module(agent_module)
+                                        module_path = f"HEAVEN_DATA_DIR/agents/{agent_name.lower()}/{filename[:-3]}"
+                                        break
+                                    except Exception:
+                                        continue
+                    
+                    # Try heaven_base.agents if not found in HEAVEN_DATA_DIR
+                    if agent_module is None:
+                        module_path = f"heaven_base.agents.{agent_name.lower()}.{agent_name.lower()}"
+                        agent_module = importlib.import_module(module_path)
+                    # print(f"Importing from: {{module_path}}")
                     
                     # Convert agent_name to PascalCase
                     pascal_name = ''.join(word.capitalize() for word in agent_name.split('_'))
@@ -249,10 +271,29 @@ async def exec_agent_run_locally_without_docker(
                 if not replicant_success:
                     try:
                         config_name = f"{agent_name.lower()}_config"
-                        config_path = f"computer_use_demo.tools.base.agents.{agent_name.lower()}.{config_name}"
-                        # print(f"Looking for config at: {{config_path}}")
                         
-                        config_module = importlib.import_module(config_path)
+                        # Try HEAVEN_DATA_DIR first, then heaven_base library
+                        config_module = None
+                        config_path = None
+                        
+                        # Try HEAVEN_DATA_DIR/agents/ first
+                        heaven_data_dir = os.environ.get('HEAVEN_DATA_DIR')
+                        if heaven_data_dir:
+                            custom_config_path = os.path.join(heaven_data_dir, 'agents', f"{config_name}.py")
+                            if os.path.exists(custom_config_path):
+                                try:
+                                    spec = importlib.util.spec_from_file_location(config_name, custom_config_path)
+                                    config_module = importlib.util.module_from_spec(spec)
+                                    spec.loader.exec_module(config_module)
+                                    config_path = f"HEAVEN_DATA_DIR/agents/{config_name}.py"
+                                except Exception:
+                                    pass
+                        
+                        # Try heaven_base.agents if not found in HEAVEN_DATA_DIR
+                        if config_module is None:
+                            config_path = f"heaven_base.agents.{config_name}"
+                            config_module = importlib.import_module(config_path)
+                        # print(f"Looking for config at: {{config_path}}")
                         config = getattr(config_module, config_name)
                         config.system_prompt += (command_data.get('system_prompt_suffix', '') or '')
                         
@@ -653,14 +694,14 @@ def _remove_base64_images(obj):
             _remove_base64_images(item)
 
 def format_message(msg_dict, ai_messages_only=True):
-    if hasattr(msg_dict, '__class__'):
-        # It's a LangChain object
+    if hasattr(msg_dict, 'content') and hasattr(msg_dict, '__class__') and not isinstance(msg_dict, dict):
+        # It's a LangChain message object
         msg_type = msg_dict.__class__.__name__
         content = msg_dict.content
     else:
         # It's a dict
-        msg_type = msg_dict["type"]
-        content = msg_dict["content"]
+        msg_type = msg_dict.get("type", "Unknown")
+        content = msg_dict.get("content", "")
 
     if msg_type == "SystemMessage":
         return f"�� **System:** SystemMessage has been truncated. It can be viewed in the history."
@@ -1028,6 +1069,9 @@ async def use_hermes_dict(
                 config_data = json.load(f)
             config = HermesConfig.load_from_json(config_data)
             print(f"\nAfter loading config - config type: {type(config)}")
+        else:
+            # hermes_config is already a HermesConfig object
+            config = hermes_config
         # Get the config's templating structure
         config_template = config.args_template.get("variable_inputs", {})
 
@@ -1260,11 +1304,22 @@ async def use_hermes_dict(
 #### Chaining
 
 def handle_hermes_response(
-    result: Dict[str, Any],
+    result: Union[Dict[str, Any], str],
     handle_block_report_callable: Optional[Callable] = None
 ) -> Dict[str, Any]:
     """Handle hermes response, adding prepared_message to result dict."""
     
+    # Handle case where hermes_step returns a string (error case)
+    if isinstance(result, str):
+        return {
+            "formatted_output": result,
+            "prepared_message": f"{result}\n\nThe result was processed by the handler system.\nHANDLER: ⚠️  Hermes returned a string (likely error output).",
+            "goal_accomplished": False,
+            "has_block_report": False,
+            "error": True
+        }
+    
+    # Handle normal dict response
     formatted_output = result.get("formatted_output", "")
     
     if result.get("goal_accomplished", False):
@@ -1320,10 +1375,7 @@ async def hermes_step(
         system_prompt_suffix=system_prompt_suffix
     )
     
-    # If result is an error string, return it directly
-    if isinstance(result, str):
-        return result
-        
+    # Always pass through handle_hermes_response to normalize output
     result = handle_hermes_response(result, handle_block_report_callable)
     return result["prepared_message"] if as_tool else result
 

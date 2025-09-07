@@ -30,14 +30,14 @@ class ConceptGraphBuilder:
     def create_concept_indexes(self):
         """Create indexes for temporal conversation knowledge graph."""
         queries = [
-            "CREATE INDEX IF NOT EXISTS FOR (c:ConceptTag) ON (c.canonical_form)",
-            "CREATE INDEX IF NOT EXISTS FOR (c:ConceptTag) ON (c.keyword)",
-            "CREATE INDEX IF NOT EXISTS FOR (conv:Conversation) ON (conv.conversation_id)",
-            "CREATE INDEX IF NOT EXISTS FOR (p:Phase) ON (p.phase_number)",
-            "CREATE INDEX IF NOT EXISTS FOR (i:Iteration) ON (i.iteration_number)",
-            "CREATE INDEX IF NOT EXISTS FOR (s:TotalSummary) ON (s.conversation_id)",
-            "CREATE INDEX IF NOT EXISTS FOR (s:PhaseSummary) ON (s.phase_id)",
-            "CREATE INDEX IF NOT EXISTS FOR (s:IterationSummary) ON (s.iteration_number)"
+            "CREATE INDEX IF NOT EXISTS FOR (c:ConceptTag:Conversations) ON (c.canonical_form)",
+            "CREATE INDEX IF NOT EXISTS FOR (c:ConceptTag:Conversations) ON (c.keyword)",
+            "CREATE INDEX IF NOT EXISTS FOR (conv:Conversation:Conversations) ON (conv.conversation_id)",
+            "CREATE INDEX IF NOT EXISTS FOR (p:Phase:Conversations) ON (p.phase_number)",
+            "CREATE INDEX IF NOT EXISTS FOR (i:Iteration:Conversations) ON (i.iteration_number)",
+            "CREATE INDEX IF NOT EXISTS FOR (s:TotalSummary:Conversations) ON (s.conversation_id)",
+            "CREATE INDEX IF NOT EXISTS FOR (s:PhaseSummary:Conversations) ON (s.phase_id)",
+            "CREATE INDEX IF NOT EXISTS FOR (s:IterationSummary:Conversations) ON (s.iteration_number)"
         ]
         
         for query in queries:
@@ -54,7 +54,7 @@ class ConceptGraphBuilder:
             Node ID of the created/merged conversation
         """
         query = """
-        MERGE (conv:Conversation {conversation_id: $conversation_id})
+        MERGE (conv:Conversation:Conversations {conversation_id: $conversation_id})
         SET conv.last_updated = datetime($timestamp)
         SET conv += $metadata
         RETURN conv.conversation_id as node_id
@@ -93,20 +93,20 @@ class ConceptGraphBuilder:
         """
         query = """
         // Create or merge the concept tag
-        MERGE (c:ConceptTag {canonical_form: $canonical_form})
+        MERGE (c:ConceptTag:Conversations {canonical_form: $canonical_form})
         SET c.keyword = $keyword
         SET c.description = $description
         SET c.last_updated = datetime($timestamp)
         
         // Link to conversation
         WITH c
-        MATCH (conv:Conversation {conversation_id: $conversation_id})
+        MATCH (conv:Conversation:Conversations {conversation_id: $conversation_id})
         MERGE (c)-[r:MENTIONED_IN]->(conv)
         SET r.last_updated = datetime($timestamp)
         
         // Link to iteration if specified
         WITH c
-        OPTIONAL MATCH (i:Iteration {iteration_number: $iteration_number, conversation_id: $conversation_id})
+        OPTIONAL MATCH (i:Iteration:Conversations {iteration_number: $iteration_number, conversation_id: $conversation_id})
         FOREACH (_ IN CASE WHEN i IS NOT NULL THEN [1] ELSE [] END |
             MERGE (c)-[r2:MENTIONED_IN_ITERATION]->(i)
             SET r2.last_updated = datetime($timestamp)
@@ -148,8 +148,8 @@ class ConceptGraphBuilder:
             strength: Strength of the relationship (0.0 to 1.0)
         """
         query = """
-        MATCH (c1:ConceptTag {canonical_form: $from_concept})
-        MATCH (c2:ConceptTag {canonical_form: $to_concept})
+        MATCH (c1:ConceptTag:Conversations {canonical_form: $from_concept})
+        MATCH (c2:ConceptTag:Conversations {canonical_form: $to_concept})
         MERGE (c1)-[r:RELATES_TO]->(c2)
         SET r.type = $relationship_type
         SET r.valid_at = datetime($valid_at)
@@ -191,14 +191,14 @@ class ConceptGraphBuilder:
         phase_id = f"{conversation_id}_phase_{phase_number}"
         
         query = """
-        MERGE (p:Phase {phase_id: $phase_id})
+        MERGE (p:Phase:Conversations {phase_id: $phase_id})
         SET p.phase_number = $phase_number
         SET p.iteration_range = $iteration_range
         SET p.description = $description
         SET p.last_updated = datetime($timestamp)
         
         WITH p
-        MATCH (conv:Conversation {conversation_id: $conversation_id})
+        MATCH (conv:Conversation:Conversations {conversation_id: $conversation_id})
         MERGE (p)-[:PART_OF]->(conv)
         
         RETURN p.phase_id as node_id
@@ -237,19 +237,19 @@ class ConceptGraphBuilder:
             Iteration ID
         """
         query = """
-        MERGE (i:Iteration {iteration_number: $iteration_number, conversation_id: $conversation_id})
+        MERGE (i:Iteration:Conversations {iteration_number: $iteration_number, conversation_id: $conversation_id})
         SET i.timestamp = datetime($timestamp)
         SET i.summary = $summary
         SET i.last_updated = datetime($current_timestamp)
         
         // Link to conversation
         WITH i
-        MATCH (conv:Conversation {conversation_id: $conversation_id})
+        MATCH (conv:Conversation:Conversations {conversation_id: $conversation_id})
         MERGE (i)-[:PART_OF]->(conv)
         
         // Link to phase
         WITH i
-        MATCH (p:Phase {phase_number: $phase_number, conversation_id: $conversation_id})
+        MATCH (p:Phase:Conversations {phase_number: $phase_number, conversation_id: $conversation_id})
         MERGE (i)-[:PART_OF]->(p)
         
         RETURN i.iteration_number as node_id
@@ -288,7 +288,7 @@ class ConceptGraphBuilder:
             Summary ID
         """
         query = """
-        MERGE (s:TotalSummary {conversation_id: $conversation_id})
+        MERGE (s:TotalSummary:Conversations {conversation_id: $conversation_id})
         SET s.executive_summary = $executive_summary
         SET s.outcomes = $outcomes
         SET s.challenges = $challenges
@@ -297,7 +297,7 @@ class ConceptGraphBuilder:
         
         // Link to conversation
         WITH s
-        MATCH (conv:Conversation {conversation_id: $conversation_id})
+        MATCH (conv:Conversation:Conversations {conversation_id: $conversation_id})
         MERGE (conv)-[:HAS_SUMMARY]->(s)
         
         RETURN s.conversation_id as node_id
@@ -338,7 +338,7 @@ class ConceptGraphBuilder:
             Summary ID
         """
         query = """
-        MERGE (s:IterationSummary {iteration_number: $iteration_number, conversation_id: $conversation_id})
+        MERGE (s:IterationSummary:Conversations {iteration_number: $iteration_number, conversation_id: $conversation_id})
         SET s.actions_taken = $actions_taken
         SET s.outcomes = $outcomes
         SET s.challenges = $challenges
@@ -347,7 +347,7 @@ class ConceptGraphBuilder:
         
         // Link to iteration
         WITH s
-        MATCH (i:Iteration {iteration_number: $iteration_number, conversation_id: $conversation_id})
+        MATCH (i:Iteration:Conversations {iteration_number: $iteration_number, conversation_id: $conversation_id})
         MERGE (i)-[:HAS_SUMMARY]->(s)
         
         RETURN s.iteration_number as node_id
@@ -376,7 +376,7 @@ class ConceptGraphBuilder:
             List of matching concepts with their details
         """
         query = """
-        MATCH (c:ConceptTag)
+        MATCH (c:ConceptTag:Conversations)
         WHERE toLower(c.canonical_form) CONTAINS toLower($keyword)
            OR toLower(c.keyword) CONTAINS toLower($keyword)
            OR toLower(c.description) CONTAINS toLower($keyword)
@@ -436,7 +436,7 @@ class ConceptGraphBuilder:
         
         query = """
         // Find all concepts updated on the given date
-        MATCH (c:ConceptTag)
+        MATCH (c:ConceptTag:Conversations)
         WHERE date(c.last_updated) = date($date)
         
         // Get their conversation context

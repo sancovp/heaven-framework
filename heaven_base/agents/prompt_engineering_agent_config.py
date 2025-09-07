@@ -27,12 +27,12 @@ When creating prompt blocks, ensure they are:
 - Designed for reusability across different agents
 """
 
-heavenly_being_prompt_engineering_agent_config = HeavenAgentConfig(
+prompt_engineering_agent_config = HeavenAgentConfig(
     name="HeavenlyBeingPromptEngineeringAgent",
     system_prompt=SYSTEM_PROMPT,
     tools=[WritePromptBlockTool,  SearchPromptBlocksTool, WriteSkillchainTypePromptBlockTool],
-    provider=ProviderEnum.ANTHROPIC,
-    model="claude-3-5-sonnet-20241022",
+    provider=ProviderEnum.OPENAI,
+    model="gpt-5",
     temperature=0.7,
     additional_kws=[],
     additional_kw_instructions= """""",
