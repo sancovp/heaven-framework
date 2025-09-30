@@ -35,9 +35,10 @@ dependencies = [
     "langchain>=0.1.0",
     "langgraph>=0.2.0",
     "litellm>=1.67.5",
-    "pydantic==2.10.6",
+    "pydantic>=2.11.7",
     "requests>=2.31.0",
     "httpx>=0.24.0",
+    "fastmcp==2.12.2",
 ]
 
 [project.optional-dependencies]
@@ -47,6 +48,9 @@ dev = [
     "black>=23.0",
     "ruff>=0.1.0",
 ]
+
+[project.scripts]
+heaven-framework-toolbox = "heaven_base.mcps.toolbox_server:main"
 
 [project.urls]
 Homepage = "https://github.com/sancovp/heaven-framework"
@@ -62,6 +66,7 @@ packages = [
     "heaven_base.cli",
     "heaven_base.configs", 
     "heaven_base.langgraph",
+    "heaven_base.mcps",
     "heaven_base.memory",
     "heaven_base.progenitor",
     "heaven_base.prompts",

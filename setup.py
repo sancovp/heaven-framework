@@ -24,14 +24,15 @@ setup(
     install_requires=[
         "google-adk>=0.2.0",
         "google-genai>=1.11.0",
-        "langchain-anthropic>=0.3.13",
+        "pydantic>=2.11.7",
         "langchain-core>=0.3.65",
+        "langchain-anthropic>=0.3.13",
         "langchain-deepseek>=0.1.2",
         "langchain-google-genai>=2.1.5",
         "langchain-groq>=0.2.4",
         "langchain-openai>=0.3.22",
         "litellm>=1.67.5",
-        "pydantic==2.10.6",
+        "fastmcp==2.12.2",
     ],
     extras_require={
         "dev": [
@@ -58,6 +59,11 @@ setup(
         "Documentation": "https://heaven.readthedocs.io",
         "Source": "https://github.com/heaven-framework/heaven",
         "Issues": "https://github.com/heaven-framework/heaven/issues",
+    },
+    entry_points={
+        "console_scripts": [
+            "heaven-framework-toolbox=heaven_base.mcps.toolbox_server:main",
+        ],
     },
     include_package_data=True,
     zip_safe=False,

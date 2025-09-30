@@ -16,9 +16,29 @@ from .websearch_tool import WebsearchTool
 from .registry_tool import RegistryTool
 from .workflow_relay_tool import WorkflowRelayTool
 from .view_history_tool import ViewHistoryTool
-# AgentConfigTestTool excluded to avoid circular imports - available separately
+
+# Prompt block tools
+from .write_prompt_block_tool import WritePromptBlockTool
+from .search_prompt_blocks_tool import SearchPromptBlocksTool
+from .write_skillchain_type_prompt_block_tool import WriteSkillchainTypePromptBlockTool
+
+# Additional tools
+from .neo4j_tool import Neo4jTool
+from .redaction_tool import RedactionTool
+from .agent_config_test_tool import AgentConfigTestTool
+
+# Acolyte chain tools - excluded to avoid circular imports - available separately
+# from .acolyte_chain_tools import (
+#     ScriptOnlyChainTool,
+#     ScriptWithConfigsChainTool, 
+#     AnalysisImprovementChainTool,
+#     FullSystemBuildChainTool,
+#     ToolGenerationChainTool,
+#     PromptEngineeringChainTool
+# )
 
 __all__ = [
+    # Original tools
     "WriteBlockReportTool",
     "StraightforwardSummarizerTool", 
     "RetrieveToolInfoTool",
@@ -30,5 +50,17 @@ __all__ = [
     "WebsearchTool",
     "RegistryTool",
     "WorkflowRelayTool",
-    "ViewHistoryTool"
+    "ViewHistoryTool",
+    
+    # Prompt block tools
+    "WritePromptBlockTool",
+    "SearchPromptBlocksTool",
+    "WriteSkillchainTypePromptBlockTool",
+    
+    # Additional tools
+    "Neo4jTool",
+    "RedactionTool",
+    "AgentConfigTestTool"
+    
+    # Acolyte chain tools excluded to avoid circular imports
 ]
