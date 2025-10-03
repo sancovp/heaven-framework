@@ -19,7 +19,7 @@ HEAVEN Base is the foundational framework for building autonomous AI agents with
 pip install heaven-framework
 ```
 
-## Toolbox MCP
+# Toolbox MCP
 #### Claude Code
 ```
 "heaven-framework-toolbox": {
@@ -36,6 +36,7 @@ pip install heaven-framework
     }
 ```
 
+# SDK
 ## Quick Start
 
 ### Creating a Simple Agent
