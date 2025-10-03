@@ -16,7 +16,7 @@ HEAVEN Base is the foundational framework for building autonomous AI agents with
 ## Installation
 
 ```bash
-pip install heaven-base
+pip install heaven-framework
 ```
 
 ## Quick Start
@@ -116,7 +116,7 @@ HEAVEN Base is actively evolving with a clear roadmap to become a complete agent
 
 ### 🎯 The Vision
 HEAVEN Base aims to be the complete toolkit for agent development:
-- **Install** → pip install heaven-base
+- **Install** → pip install heaven-framework
 - **Run** → hermes.run_agent(agent, prompt)
 - **Compose** → Build prompts from blocks and inject context
 - **Orchestrate** → Create complex workflows as LangGraph nodes
