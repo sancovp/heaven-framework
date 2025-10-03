@@ -20,7 +20,7 @@ pip install heaven-framework
 ```
 
 # Toolbox MCP
-#### Claude Code
+## Claude Code
 ```
 "heaven-framework-toolbox": {
       "type": "stdio",
