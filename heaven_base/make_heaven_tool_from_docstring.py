@@ -154,16 +154,20 @@ def analyze_python_type(param_type: Type, param_name: str, func_name: str) -> Di
     
     # Handle Pydantic models - structured objects
     if isinstance(param_type, type) and issubclass(param_type, BaseModel):
+        # Inline fields directly instead of using 'nested' to avoid double-nesting
+        fields = convert_pydantic_to_flat(param_type, param_name, func_name)
         return {
             'type': 'object',
-            'nested': convert_pydantic_to_nested(param_type, param_name, func_name)
+            **fields  # Spread fields directly into object definition
         }
     
     # Handle dataclasses
     if hasattr(param_type, '__dataclass_fields__'):
+        # Inline fields directly instead of using 'nested' to avoid double-nesting
+        fields = convert_dataclass_to_flat(param_type, param_name, func_name)
         return {
-            'type': 'object', 
-            'nested': convert_dataclass_to_nested(param_type, param_name, func_name)
+            'type': 'object',
+            **fields  # Spread fields directly into object definition
         }
     
     # Handle basic types
@@ -184,10 +188,10 @@ def analyze_python_type(param_type: Type, param_name: str, func_name: str) -> Di
     return {'type': 'string'}
 
 
-def convert_pydantic_to_nested(model_class: Type[BaseModel], param_name: str, func_name: str) -> Dict[str, Dict]:
-    """Convert Pydantic model to ToolArgsSchema nested structure."""
-    nested = {}
-    
+def convert_pydantic_to_flat(model_class: Type[BaseModel], param_name: str, func_name: str) -> Dict[str, Dict]:
+    """Convert Pydantic model to flat field definitions for inline use."""
+    fields_dict = {}
+
     # Get model fields
     if hasattr(model_class, 'model_fields'):
         # Pydantic v2
@@ -196,45 +200,43 @@ def convert_pydantic_to_nested(model_class: Type[BaseModel], param_name: str, fu
             field_type = field_info.annotation
             is_required = field_info.is_required() if hasattr(field_info, 'is_required') else True
             description = field_info.description or f"{field_name} field"
-            
+
             field_analysis = analyze_python_type(field_type, f"{param_name}.{field_name}", func_name)
-            
-            nested[field_name] = {
-                field_name: {
-                    **field_analysis,
-                    'description': description,
-                    'required': is_required
-                }
+
+            # Create flat field definition (no double-nesting)
+            fields_dict[field_name] = {
+                **field_analysis,
+                'description': description,
+                'required': is_required
             }
     else:
         # Pydantic v1 or other
         warnings.warn(f"Could not extract fields from Pydantic model {model_class} for parameter '{param_name}' in {func_name}(). "
                      f"Using flexible object type.")
         return {}
-    
-    return nested
+
+    return fields_dict
 
 
-def convert_dataclass_to_nested(dataclass_type: Type, param_name: str, func_name: str) -> Dict[str, Dict]:
-    """Convert dataclass to ToolArgsSchema nested structure."""
-    nested = {}
-    
+def convert_dataclass_to_flat(dataclass_type: Type, param_name: str, func_name: str) -> Dict[str, Dict]:
+    """Convert dataclass to flat field definitions for inline use."""
+    fields_dict = {}
+
     for field_name, field in dataclass_type.__dataclass_fields__.items():
         field_type = field.type
         is_required = field.default == MISSING and field.default_factory == MISSING
         description = f"{field_name} field"
-        
+
         field_analysis = analyze_python_type(field_type, f"{param_name}.{field_name}", func_name)
-        
-        nested[field_name] = {
-            field_name: {
-                **field_analysis,
-                'description': description,
-                'required': is_required
-            }
+
+        # Create flat field definition (no double-nesting)
+        fields_dict[field_name] = {
+            **field_analysis,
+            'description': description,
+            'required': is_required
         }
-    
-    return nested
+
+    return fields_dict
 
 
 def make_heaven_tool_from_docstring(func: Callable, tool_name: Optional[str] = None) -> Type[BaseHeavenTool]:

@@ -28,7 +28,6 @@ def connect_mcp_session(server_name: str) -> Dict[str, Any]:
     Returns:
         dict: Status and result information
     """
-    print(f"Connecting to MCP server: {server_name}")
     try:
         result = start_session(server_name)
         if result.get("status") == "ok":
@@ -63,7 +62,6 @@ def disconnect_mcp_session() -> Dict[str, Any]:
     Returns:
         dict: Status and result information
     """
-    print("Disconnecting from MCP server")
     try:
         result = close_session()
         if result.get("status") == "ok":
@@ -136,7 +134,6 @@ if __name__ != "__main__":
         
     except ImportError:
         # Fallback if make_heaven_tool_from_docstring is not available
-        print("Warning: make_heaven_tool_from_docstring not available. Tools not created.")
         ConnectMCPSessionTool = None
         DisconnectMCPSessionTool = None
         GetMCPSessionStatusTool = None

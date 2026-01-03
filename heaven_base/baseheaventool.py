@@ -698,15 +698,6 @@ class BaseHeavenTool(ABC):
         **kwargs
     ) -> ToolResult:
         """Synchronous execution path using wrapped base tool"""
-        print(f"\n=== DEBUG _run ===")
-        print(f"kwargs received: {kwargs}")
-        print(f"is_async: {self.is_async}")
-        print(f"run_manager: {run_manager}")
-        print(f"config: {config}")
-        print(f"base_tool.func: {self.base_tool.func}")
-        print(f"base_tool.coroutine: {getattr(self.base_tool, 'coroutine', None)}")
-        print(f"base_tool._arun exists: {hasattr(self.base_tool, '_arun')}")
-        print(f"base_tool.arun exists: {hasattr(self.base_tool, 'arun')}")
         cleaned_kwargs = self._clean_kwargs(kwargs)
         if cleaned_kwargs:
             kwargs = cleaned_kwargs
@@ -735,15 +726,7 @@ class BaseHeavenTool(ABC):
         config: Optional[RunnableConfig] = None,
         **kwargs
     ) -> ToolResult:
-        print(f"\n=== DEBUG _arun ===")
-        print(f"kwargs received: {kwargs}")
-        print(f"is_async: {self.is_async}")
-        print(f"run_manager: {run_manager}")
-        print(f"config: {config}")
-        print(f"base_tool.func: {self.base_tool.func}")
-        print(f"base_tool.coroutine: {getattr(self.base_tool, 'coroutine', None)}")
-        print(f"base_tool._arun exists: {hasattr(self.base_tool, '_arun')}")
-        print(f"base_tool.arun exists: {hasattr(self.base_tool, 'arun')}")
+        """Asynchronous execution path using wrapped base tool"""
         cleaned_kwargs = self._clean_kwargs(kwargs)
         if cleaned_kwargs:
             kwargs = cleaned_kwargs
@@ -792,11 +775,9 @@ class BaseHeavenTool(ABC):
     @classmethod
     def to_openai_function(cls):
         """Convert the tool's schema to OpenAI function format"""
-        print("Entered tool.to_openai_function")
         # Create the Pydantic schema
         schema_instance = cls.args_schema()
         pydantic_schema = cls.args_schema.to_pydantic_schema(schema_instance.arguments)
-        print(f"tool Pydantic Schema = {pydantic_schema}")
         # Use LangChain's built-in converter
         openai_function = convert_to_openai_tool(
             Tool(
@@ -811,7 +792,6 @@ class BaseHeavenTool(ABC):
       
     def get_openai_function(self):
         """Get the OpenAI function specification"""
-        print("Entered tool.get_openai_function")
         return self.__class__.to_openai_function()   
   
     @classmethod

@@ -14,6 +14,7 @@ from .code_localizer_tool import CodeLocalizerTool
 from .think_tool import ThinkTool
 from .websearch_tool import WebsearchTool
 from .registry_tool import RegistryTool
+from .matryoshka_registry_tool import MatryoshkaRegistryTool
 from .workflow_relay_tool import WorkflowRelayTool
 from .view_history_tool import ViewHistoryTool
 
@@ -49,6 +50,7 @@ __all__ = [
     "ThinkTool",
     "WebsearchTool",
     "RegistryTool",
+    "MatryoshkaRegistryTool",
     "WorkflowRelayTool",
     "ViewHistoryTool",
     
