@@ -13,7 +13,7 @@ with open(os.path.join(this_directory, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name="heaven-framework",
-    version="0.1.17",
+    version="0.1.18",
     description="HEAVEN - Hierarchical, Embodied, Autonomously Validating Evolution Network",
     long_description=long_description,
     long_description_content_type="text/markdown",

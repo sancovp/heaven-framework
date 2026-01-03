@@ -3,14 +3,18 @@ HEAVEN Base - Hierarchical, Embodied, Autonomously Validating Evolution Network
 Complete core framework for building autonomous AI agents.
 """
 
-# CRITICAL: Redirect stdout to stderr to prevent MCP protocol corruption
-# When heaven_base is used inside MCP servers, any print() to stdout breaks the JSON-RPC protocol
+# Redirect print() to stderr to prevent MCP protocol corruption
+# Set HEAVEN_ALLOW_STDOUT=1 to disable this (e.g. for docker cross-machine scenarios)
 import sys
 import os
+import builtins
 
-# Only redirect if we're running as an MCP server (not in interactive/test mode)
-if not sys.stdout.isatty() and os.environ.get("HEAVEN_ALLOW_STDOUT") != "1":
-    sys.stdout = sys.stderr
+if os.environ.get("HEAVEN_ALLOW_STDOUT") != "1":
+    _original_print = builtins.print
+    def _stderr_print(*args, **kwargs):
+        kwargs.setdefault('file', sys.stderr)
+        _original_print(*args, **kwargs)
+    builtins.print = _stderr_print
 
 __version__ = "1.2.1"
 
