@@ -596,10 +596,10 @@ class HeavenAgentConfig(BaseModel):
                         
             
                         if callable(dynamic_function):
-            
-                            # Call the function (must take no args as per user requirement)
-            
-                            block_text = dynamic_function() 
+
+                            # Call the function with optional args
+                            args = call_details.get("args", {})
+                            block_text = dynamic_function(**args) if args else dynamic_function() 
             
                             
             
@@ -616,26 +616,24 @@ class HeavenAgentConfig(BaseModel):
                             suffix_texts.append(block_text)
             
                         else:
-            
-                            print(f"Error: Attribute '{function_name_str}' in module '{module_path_str}' is not callable.")
-            
+                            fallback = f"[Dynamic call failed: '{function_name_str}' in '{module_path_str}' is not callable]"
+                            suffix_texts.append(fallback)
+
                     else:
-            
-                        print(f"Error: Function '{function_name_str}' not found in module '{module_path_str}'.")
-            
-                        
-            
-                except ImportError:
-            
-                    # This specific except block handles if module_path_str itself is not found
-            
-                    print(f"Error: Module '{module_path_str}' not found for dynamic_call.")
-            
+                            fallback = f"[Dynamic call failed: Function '{function_name_str}' not found in module '{module_path_str}']"
+                            suffix_texts.append(fallback)
+
+                except ImportError as e:
+                    import traceback
+                    tb = traceback.format_exc()
+                    fallback = f"[Dynamic call failed: Module '{module_path_str}' not found]\n{tb}"
+                    suffix_texts.append(fallback)
+
                 except Exception as e:
-            
-                    # General catch-all for other unexpected errors during dynamic_call processing
-            
-                    print(f"Error processing dynamic_call block for '{module_path_str}.{function_name_str}': {e}")
+                    import traceback
+                    tb = traceback.format_exc()
+                    fallback = f"[Dynamic call failed: {module_path_str}.{function_name_str}]\n{tb}"
+                    suffix_texts.append(fallback)
 
             else:
     
