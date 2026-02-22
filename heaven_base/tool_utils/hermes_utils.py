@@ -112,7 +112,8 @@ async def exec_agent_run_locally_without_docker(
     additional_tools: Optional[List[str]] = None,
     system_prompt_suffix: Optional[str] = None,
     agent_mode: Optional[bool] = True,
-    heaven_main_callback: Optional[Callable] = None
+    heaven_main_callback: Optional[Callable] = None,
+    agent_constructor_kwargs: Optional[Dict[str, Any]] = None
 ) -> dict:
     """
     Execute an agent command locally without Docker.
@@ -161,7 +162,7 @@ async def exec_agent_run_locally_without_docker(
                     model="claude-3-5-sonnet-20241022",
                     temperature=0.0
                 )
-                agent = BaseHeavenAgent(config, UnifiedChat(), orchestrator=command_data.get('orchestration_preprocess', False))
+                agent = BaseHeavenAgent(config, UnifiedChat(), orchestrator=command_data.get('orchestration_preprocess', False), **(agent_constructor_kwargs or {}))
             elif isinstance(command_data['agent'], HeavenAgentConfig):
                 # Config object - create BaseHeavenAgent with hermes args
                 config = command_data['agent']
@@ -179,11 +180,12 @@ async def exec_agent_run_locally_without_docker(
                     config.tools.extend(additional_tool_classes)
           
                 # Create agent with history_id if provided
+                extra_kwargs = agent_constructor_kwargs or {}
                 if command_data['history_id']:
-                    agent = BaseHeavenAgent(config, UnifiedChat(), history_id=command_data['history_id'], orchestrator=command_data.get('orchestration_preprocess', False))
+                    agent = BaseHeavenAgent(config, UnifiedChat(), history_id=command_data['history_id'], orchestrator=command_data.get('orchestration_preprocess', False), **extra_kwargs)
                 else:
-                    agent = BaseHeavenAgent(config, UnifiedChat(), orchestrator=command_data.get('orchestration_preprocess', False))
-          
+                    agent = BaseHeavenAgent(config, UnifiedChat(), orchestrator=command_data.get('orchestration_preprocess', False), **extra_kwargs)
+
             elif inspect.isclass(command_data['agent']) and issubclass(command_data['agent'], BaseHeavenAgentReplicant):
                 # Replicant class - instantiate with hermes args
                 agent_class = command_data['agent']
@@ -365,8 +367,8 @@ async def exec_agent_run_locally_without_docker(
             return response_data
         
         except Exception as e:
-            # print(f"DEBUG: Exception in local execution: {str(e)}")
-            # print(f"DEBUG: Full traceback: {traceback.format_exc()}")
+            print(f"DEBUG: Exception in local execution: {str(e)}")
+            print(f"DEBUG: Full traceback: {traceback.format_exc()}")
             return {
                 "error": str(e),
                 "traceback": traceback.format_exc()
@@ -1052,7 +1054,8 @@ async def use_hermes_dict(
     additional_tools: Optional[List[str]] = None,
     hermes_config: Optional[Union[str, HermesConfig]] = None,
     variable_inputs: Optional[Dict[str, Union[Dict[str, Any], List[Any]]]] = None,
-    system_prompt_suffix: Optional[str] = None
+    system_prompt_suffix: Optional[str] = None,
+    agent_constructor_kwargs: Optional[Dict[str, Any]] = None
 ) -> Union[Dict[str, Any], str]:  # Can return dict or error string
     """Execute an agent command via Hermes. If a config is provided,
     variable_inputs should match the config's templating structure."""
@@ -1186,7 +1189,8 @@ async def use_hermes_dict(
                 additional_tools=final_params["additional_tools"],
                 orchestration_preprocess=final_params["orchestration_preprocess"],
                 system_prompt_suffix=final_params["system_prompt_suffix"],
-                remove_agents_config_tools=final_params["remove_agents_config_tools"]
+                remove_agents_config_tools=final_params["remove_agents_config_tools"],
+                agent_constructor_kwargs=agent_constructor_kwargs
             )
         else:
             print("use_hermes_dict calling exec_agent_run_via_docker")
@@ -1354,7 +1358,8 @@ async def hermes_step(
     variable_inputs: Optional[Dict[str, Union[Dict[str, Any], List[Any]]]] = None,
     system_prompt_suffix: Optional[str] = None,
     handle_block_report_callable: Optional[Callable] = None,
-    as_tool: bool = False
+    as_tool: bool = False,
+    agent_constructor_kwargs: Optional[Dict[str, Any]] = None
 ) -> Union[Dict[str, Any], str]:
     """Execute hermes and handle response. Returns dict unless as_tool=True."""
     result = await use_hermes_dict(
@@ -1372,7 +1377,8 @@ async def hermes_step(
         additional_tools=additional_tools,
         hermes_config=hermes_config,
         variable_inputs=variable_inputs,
-        system_prompt_suffix=system_prompt_suffix
+        system_prompt_suffix=system_prompt_suffix,
+        agent_constructor_kwargs=agent_constructor_kwargs
     )
     
     # Always pass through handle_hermes_response to normalize output
@@ -1396,7 +1402,8 @@ async def hermes_step_as_tool(
     hermes_config: Optional[Union[str, HermesConfig]] = None,
     variable_inputs: Optional[Dict[str, Union[Dict[str, Any], List[Any]]]] = None,
     system_prompt_suffix: Optional[str] = None,
-    handle_block_report_callable: Optional[Callable] = None
+    handle_block_report_callable: Optional[Callable] = None,
+    agent_constructor_kwargs: Optional[Dict[str, Any]] = None
 ) -> str:
     """Wrapper for hermes_step that always returns just the prepared message string for tools."""
     return await hermes_step(
@@ -1416,5 +1423,6 @@ async def hermes_step_as_tool(
         variable_inputs=variable_inputs,
         system_prompt_suffix=system_prompt_suffix,
         handle_block_report_callable=handle_block_report_callable,
-        as_tool=True
+        as_tool=True,
+        agent_constructor_kwargs=agent_constructor_kwargs
     )

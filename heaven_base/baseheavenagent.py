@@ -25,14 +25,12 @@ import logging
 import sys
 import importlib.util
 from .progenitor.system_prompt_config import SystemPromptConfig
-from google.genai.types import Content, Part
-from google.adk.sessions.in_memory_session_service import InMemorySessionService
-from google.adk.agents import Agent as ADKAgent
-from google.adk.runners import Runner
+# google.adk and google.genai imports moved to lazy (inside methods that use them)
+# to avoid expensive litellm initialization on every heaven_base import.
+# See: Litellm_Heaven_Cpu_Analysis_Feb18 in CartON
 from enum import Enum
 from uuid import uuid4
 from datetime import datetime
-from google.adk.models.lite_llm import LiteLlm
 from .prompts.heaven_variable import RegistryHeavenVariable
 
 ADK_DEBUG_PATH = "/tmp/adk_streamlit_debug.txt"
@@ -328,6 +326,8 @@ class HeavenAgentConfig(BaseModel):
     duo_system_config: DuoSystemConfig = Field(default_factory=DuoSystemConfig)
     context_window_config: Optional[Any] = None  # ContextWindowConfig - imported at runtime to avoid circular imports
     mcp_servers: Optional[Dict[str, Dict[str, Any]]] = None  # MCP server configurations
+    extra_model_kwargs: Optional[Dict[str, Any]] = None  # Extra kwargs passed to UnifiedChat.create()
+    use_uni_api: bool = True  # False to skip Docker uni-api networking
     # hook_registry: HookRegistry = Field(default_factory=HookRegistry) # not sure this is right
   
     def _get_base_prompt(self):
@@ -674,9 +674,10 @@ class HeavenAgentConfig(BaseModel):
     def to_litellm_model(self):
         """
         Returns either:
-          - a bare model‐string (for Google/ADK’s built-in registry), or
-          - a LiteLlm instance (for non-Google providers) 
+          - a bare model‐string (for Google/ADK's built-in registry), or
+          - a LiteLlm instance (for non-Google providers)
         """
+        from google.adk.models.lite_llm import LiteLlm
         # if you explicitly want to force LiteLlm for EVERYTHING, drop this branch
         model_str = f"{self.provider.value}/{self.model}"
         if self.provider == ProviderEnum.GOOGLE:
@@ -774,7 +775,9 @@ class BaseHeavenAgent(ABC):
             'temperature': config.temperature,
             'max_tokens': config.max_tokens,
             'thinking_budget': config.thinking_budget
-        }        
+        }
+        if config.extra_model_kwargs:
+            model_params.update(config.extra_model_kwargs)
         # Create chat model internally using UnifiedChat
         self.chat_model = unified_chat.create(**model_params)
         self.resolve_duo(config)
@@ -952,24 +955,30 @@ You must fix the error before proceeding."""
     
     async def resolve_mcps(self):
         """Resolve MCP tool strings to actual LangChain tools and load MCP servers if configured"""
-        
+        print(f"[resolve_mcps] CALLED. mcp_servers={self.config.mcp_servers is not None}, mcp_tool_strs={getattr(self, 'mcp_tool_strs', [])}")
+
         # First, load tools from configured MCP servers (if any)
         if self.config.mcp_servers:
             await self.load_mcp_tools()
-        
+
         # Then resolve individual MCP tool strings (if any)
         if not hasattr(self, 'mcp_tool_strs') or not self.mcp_tool_strs:
+            print("[resolve_mcps] No mcp_tool_strs to resolve, returning")
             return
-            
+
         # Resolve each MCP tool string
+        from .mcp_tool_wrapper import MCPToolWrapper
         for tool_ref in self.mcp_tool_strs:
+            print(f"[resolve_mcps] Resolving: {tool_ref}")
             mcp_tool = await self._resolve_mcp_tool(tool_ref)
+            print(f"[resolve_mcps] Result: {type(mcp_tool)} — {mcp_tool if not isinstance(mcp_tool, list) else f'{len(mcp_tool)} tools'}")
             if mcp_tool:
                 if isinstance(mcp_tool, list):  # "all" case
-                    self.tools.extend(mcp_tool)
+                    self.tools.extend([MCPToolWrapper(t) for t in mcp_tool])
                 else:
-                    self.tools.append(mcp_tool)
-        
+                    self.tools.append(MCPToolWrapper(mcp_tool))
+
+        print(f"[resolve_mcps] Final tool count: {len(self.tools)}")
         # Clear the MCP strings now that they're resolved
         self.mcp_tool_strs = []
     
@@ -1101,6 +1110,7 @@ You must fix the error before proceeding."""
             logging.warning(f"Could not import langchain_mcp_adapters: {e}")
         except Exception as e:
             logging.error(f"Error loading MCP tools: {e}")
+            import traceback; traceback.print_exc()
 
 
     def to_base_tools(self) -> List[BaseTool]:
@@ -1466,10 +1476,13 @@ You must fix the error before proceeding."""
 
     
     async def run_langchain(self, prompt: str = None, notifications=False):
-        
+
         self._sanitize_history()
         blocked = False
         self.refresh_system_prompt()
+
+        # Resolve MCP tool strings before running
+        await self.resolve_mcps()
 
         try:
             

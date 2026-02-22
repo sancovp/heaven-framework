@@ -19,18 +19,20 @@ from ..utils.name_utils import normalize_agent_name
 from ..utils.get_env_value import EnvConfigUtil
 
 
-from google.adk.sessions.session import Session as ADKSession
-from google.adk.sessions.in_memory_session_service import InMemorySessionService
-from google.adk.sessions.base_session_service import BaseSessionService
-from google.adk.sessions.database_session_service import DatabaseSessionService
-from google.adk.events.event import Event as ADKEvent
-from google.adk.events.event_actions import EventActions
-from google.genai import types as adk_types
+# Stubs replacing google.adk/genai imports to avoid expensive litellm initialization.
+# ADKEvent/ADKSession are only used in isinstance() checks (always False for Anthropic)
+# and model_validate() calls behind if-guards that never fire without ADK data.
+# Dead imports removed: BaseSessionService, DatabaseSessionService, EventActions, adk_types.
+# See: Litellm_Heaven_Cpu_Analysis_Feb18 in CartON.
+# To restore ADK support, replace these stubs with the original google.adk imports.
+class ADKEvent(BaseModel):
+    """Stub for google.adk.events.event.Event — passes Pydantic schema generation
+    and isinstance checks. No real ADKEvents exist in Anthropic-only histories."""
+    model_config = {"arbitrary_types_allowed": True}
 
-
-# from google.adk import types as adk_types
-# from google.adk.events.event import Event as ADKEvent
-# from google.adk.sessions import Session as ADKSession
+class ADKSession(BaseModel):
+    """Stub for google.adk.sessions.session.Session"""
+    model_config = {"arbitrary_types_allowed": True}
 
 class AgentStatus(BaseModel):
     goal: Optional[str] = None

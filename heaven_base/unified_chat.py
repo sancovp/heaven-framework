@@ -193,6 +193,10 @@ class UnifiedChat:
 
         elif provider == ProviderEnum.ANTHROPIC:
             kwargs['model'] = model
+            # MiniMax models use Anthropic-compatible API with different key and URL
+            if model and model.lower().startswith("minimax"):
+                kwargs["api_key"] = DynamicString(EnvConfigUtil.get_env_value, "MINIMAX_API_KEY")
+                kwargs.setdefault("anthropic_api_url", "https://api.minimax.io/anthropic")
             if extract_model_number(model) > 3.6 and thinking_budget is not None: # assuming only claude model 3.7 or higher allow thinking
                 kwargs['thinking'] = {"type": "enabled", "budget_tokens": thinking_budget}
                 kwargs['temperature'] = 0.7

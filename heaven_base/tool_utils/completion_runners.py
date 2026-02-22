@@ -8,7 +8,7 @@ This module provides unified agent execution functions that support both:
 Automatically routes between local and Docker execution based on container differences.
 """
 
-from typing import Optional, Union, List, Type, Callable
+from typing import Optional, Union, List, Type, Callable, Dict, Any
 from ..baseheavenagent import HeavenAgentConfig, BaseHeavenAgentReplicant
 from .hermes_utils import (
     exec_agent_run_locally_without_docker,
@@ -24,7 +24,8 @@ async def exec_agent_run(
     remove_agents_config_tools: bool = False,
     orchestration_preprocess: bool = False,
     system_prompt_suffix: Optional[str] = None,
-    heaven_main_callback: Optional[Callable] = None
+    heaven_main_callback: Optional[Callable] = None,
+    agent_constructor_kwargs: Optional[Dict[str, Any]] = None
 ):
     """
     Completion-style agent execution that routes to local or Docker based on containers.
@@ -73,7 +74,8 @@ async def exec_agent_run(
             additional_tools=None,
             system_prompt_suffix=system_prompt_suffix,
             agent_mode=False,  # Always completion style
-            heaven_main_callback=heaven_main_callback
+            heaven_main_callback=heaven_main_callback,
+            agent_constructor_kwargs=agent_constructor_kwargs
         )
     else:
         # Note: Docker execution requires agent to be string or None (not HeavenAgentConfig)
