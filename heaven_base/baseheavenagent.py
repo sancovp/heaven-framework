@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, PrivateAttr
 from .unified_chat import UnifiedChat, ProviderEnum
 from .baseheaventool import BaseHeavenTool, ToolResult, CLIResult, ToolError
 from .tools.write_block_report_tool import WriteBlockReportTool
+from .tools.task_system_tool import TaskSystemTool
 from abc import ABC, abstractmethod
 from .memory.history import History, AgentStatus
 from collections.abc import Callable
@@ -951,6 +952,9 @@ You must fix the error before proceeding."""
         # Add WriteBlockReportTool if not already present
         if WriteBlockReportTool not in resolved_tools:
             resolved_tools.append(WriteBlockReportTool)
+        # Add TaskSystemTool if not already present
+        if TaskSystemTool not in resolved_tools:
+            resolved_tools.append(TaskSystemTool)
             
         return resolved_tools
     
@@ -1968,6 +1972,8 @@ You must fix the error before proceeding."""
                                     
                                 if tool.name == "WriteBlockReportTool":
                                     blocked = True
+                                if tool.name == "TaskSystemTool":
+                                    self._handle_task_system_tool(tool_args)
                                 if blocked:
                                     # Generate the block report
                                     block_report_md = self.create_block_report()
@@ -2820,6 +2826,9 @@ You must fix the error before proceeding."""
                     
                     tool_messages.append(tool_message)
                     
+                    # Check if TaskSystemTool was called
+                    if tool_name == "TaskSystemTool":
+                        self._handle_task_system_tool(tool_args)
                     # Check if WriteBlockReportTool was called
                     if tool_name == "WriteBlockReportTool":
                         # Mark that we're blocked - this will be checked by the caller
@@ -3429,38 +3438,14 @@ You must fix the error before proceeding."""
         f"""
         # ===AGENT MODE IS ENGAGED===
         ## ❗ **Critical Instructions for Task Execution:**
-        - The tasking system uses triple tick fence regex commands that run on your outputs
-        - You must **work on one task in the task list at a time**. Your `response_format` should be:
-        
-        1. If you need to create/update the task list, use EXACTLY this format while morphing the task values accordingly to the context:
-           "```update_task_list=["task 1", "task 2", "task 3"]```"
-           - Put each task in quotes
-           - Separate with commas
-           - No numbers, just the task text
-           - No newlines between tasks
-           - UPDATE THE ENTIRE TASK LIST, ALL TASKS AT ONCE. THIS ONLY UPDATES THE ENTIRE TASK LIST TO WHAT YOU SAY IT SHOULD BE
-           Then, write "```complete_task="create_task_list"```" since you completed the first task (create a task list)
+        - Use the **TaskSystemTool** to manage your task list. Work on **one task at a time**.
+
+        1. **Create/update task list**: Call TaskSystemTool with operation="update_tasks", tasks=["task 1", "task 2", "task 3"]
+           Then call TaskSystemTool with operation="complete_task", task_name="create_task_list" to complete the first task.
         **THEN DO THE TASKS IN THE TASK LIST, including any required tool calls. Each iteration allows {self.max_tool_calls} tool calls during agent mode!!! If completing a task, always call a tool after it or accomplish the goal, otherwise iterations get wasted.**
-        2. AFTER COMPLETING any task, use EXACTLY this format:
-           "```complete_task=<whatever the current task is>```" # morph the task to whatever the current task is. this <> tag means it is variable
-        THEN CONTINUE TO THE NEXT ASK.
-        3. When all tasks are done, use EXACTLY:
-           "```GOAL ACCOMPLISHED```"
-        
-        <Task System: HELP>
-        Example of a correct task list update with morphed values:
-        "```update_task_list=["Write introduction", "Create methods section", "Add conclusion"]```" 
-        
-        INCORRECT formats:[
-        "```update_task_list=[
-        1. First task
-        2. Second task
-        ]```"
-        
-        or
-        
-        "```update_task_list=[First task, Second task]```"  # missing quotes around tasks
-        </Task System: HELP>
+        2. **After completing any task**: Call TaskSystemTool with operation="complete_task", task_name="<the task you just finished>"
+        THEN CONTINUE TO THE NEXT TASK.
+        3. **When all tasks are done**: Call TaskSystemTool with operation="goal_accomplished"
         4. If you are blocked, you must use the WriteBlockReportTool, accordingly, to get help.
         """
         + (f"""You can also use these XML tag fence patterns when outputting specific deliverables to make the agent mode system capture them:[\n{self.additional_kw_instructions}\n]""" if self.additional_kw_instructions != "" else "")
@@ -3616,6 +3601,23 @@ You must fix the error before proceeding."""
                 self.current_task = None
                 self.goal = None
             self.history.agent_status = self.save_status()
+
+    def _handle_task_system_tool(self, tool_args: dict):
+        """Process TaskSystemTool calls — updates task state from tool args."""
+        op = tool_args.get("operation", "")
+        if op == "update_tasks":
+            tasks = tool_args.get("tasks", [])
+            if tasks and isinstance(tasks, list):
+                self.task_list = [str(t) for t in tasks]
+                self.current_task = self.task_list[0]
+        elif op == "complete_task":
+            task_name = tool_args.get("task_name", "")
+            if task_name:
+                self._complete_task(task_name)
+        elif op == "goal_accomplished":
+            self.completed = True
+            self.goal = None
+        self.history.agent_status = self.save_status()
 
     def save_status(self) -> AgentStatus:
         """Package current agent state into status object"""
