@@ -21,6 +21,7 @@ from .memory.history import History, AgentStatus
 from collections.abc import Callable
 from .utils.agent_and_tool_lists import get_agent_modules, get_tool_modules
 from .utils.name_utils import normalize_agent_name, camel_to_snake
+import asyncio
 import logging
 import sys
 import importlib.util
@@ -1697,7 +1698,8 @@ You must fix the error before proceeding."""
                                 tool = matching_tools[0]
                                 
                                 # Execute the tool and get its result
-                                # try:
+                                # Throttle to prevent CPU spin with fast models (MiniMax)
+                                await asyncio.sleep(0.1)
                                 tool_result = await tool._arun(**tool_args)
                                     
                                 
@@ -2366,7 +2368,8 @@ You must fix the error before proceeding."""
                                 # tool_result = await tool._arun(**tool_args)
                                
                                 # Execute the tool and get its result
-                                # try:
+                                # Throttle to prevent CPU spin with fast models (MiniMax)
+                                await asyncio.sleep(0.1)
                                 tool_result = await tool._arun(**tool_args)
                                 with open('/tmp/streamlit_debug.log', 'a') as f:
                                     f.write(f"\Tool result: {tool_result}")
