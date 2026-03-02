@@ -2,8 +2,8 @@
 import traceback
 import asyncio
 from typing import Optional
-from computer_use_demo.tools.base.tool_utils.hermes_utils import use_hermes
-from computer_use_demo.tools.base.baseheaventool import ToolResult
+from .hermes_utils import use_hermes
+from ..baseheaventool import ToolResult
 
 async def produce_prompt_block_util(prompt_type: str, prompt_purpose: str, iterations: int, history_id: Optional[str] = None, continuation: Optional[bool] = None, target_container: str = "mind_of_god", source_container: str = "mind_of_god"):
     variable_inputs = {}

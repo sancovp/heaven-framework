@@ -16,7 +16,7 @@ if os.environ.get("HEAVEN_ALLOW_STDOUT") != "1":
         _original_print(*args, **kwargs)
     builtins.print = _stderr_print
 
-__version__ = "1.2.1"
+__version__ = "0.1.21"
 
 # Core agent classes
 from .baseheavenagent import (

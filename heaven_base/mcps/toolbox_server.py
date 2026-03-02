@@ -341,7 +341,7 @@ async def network_edit_tool(
 * The `create` command cannot be used to edit files
 * If a command generates a long output, it will be truncated and marked with `<response clipped>`
 * The `undo_edit` command will revert the last edit made to the file at `path`
-* Important directories: 1. `your pwd/core/computer_use_demo/tools/base/tools/` to see tools, 2. `<your pwd>.../base/agents/<specific agent>/memories/...` to view `history_id`s
+* Important directories: 1. `heaven_base/tools/` to see tools, 2. `heaven_base/agents/<specific agent>/memories/...` to view `history_id`s
 * Long inputs for create, str_replace, and insert must be chunked into multiple operations (eg. create -> insert; str_replace -> insert; chain of str_replace, etc.)
 
 COMMAND REQUIREMENTS:

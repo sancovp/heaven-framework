@@ -525,44 +525,32 @@ Aim for a concise but complete representation of the essential information."""))
         
         # Use the auto_summarize function to generate a real summary
         # This uses the IterationSummarizerAgent and AggregationSummarizerAgent
-        summary = await auto_summarize(history)
-        
+        summary_result = await auto_summarize(history)
+
+        # auto_summarize returns a dict with 'aggregated_summary' key — extract the string
+        if isinstance(summary_result, dict):
+            summary = summary_result.get("aggregated_summary", "")
+            if not isinstance(summary, str):
+                summary = str(summary) if summary else ""
+        elif isinstance(summary_result, str):
+            summary = summary_result
+        else:
+            summary = ""
+
         # If auto_summarize fails, provide a minimal fallback
         if not summary or len(summary.strip()) < 10:
             print(f"Warning: auto_summarize failed for history {history_id}. Using minimal fallback.")
             summary = f"# Summary of History {history_id}\nThis is a summary of the conversation history."
-        
+
         print(f"Generated summary for history {history_id} with {len(summary)} characters")
-        
-        # Extract concepts from the summary
-        from computer_use_demo.codebase_analyzer_system.auto_summarize import reason_about_summary, get_summary_concept
-        reasoning = await reason_about_summary(summary)
-        concepts = await get_summary_concept(summary, reasoning)
-        
-        # Extract concepts as list of keywords
-        concept_keywords = []
-        if isinstance(concepts, str):
-            # Extract keywords from concept
-            for keyword in ["architecture", "design", "testing", "implementation", 
-                           "documentation", "patterns", "components", "microservices",
-                           "event-driven", "mvc", "mvvm", "api", "database", "frontend",
-                           "backend", "security", "deployment", "scaling"]:
-                if keyword in concepts.lower():
-                    concept_keywords.append(keyword)
-        
-        # Ensure we have at least one concept
-        if not concept_keywords:
-            concept_keywords = ["general"]
-        
-        print(f"Extracted concepts: {concept_keywords}")
-        
-        # Add to base level with concepts
+
+        # Add to base level
         source_path = history.json_md_path if history.json_md_path else f"history:{history_id}"
         self.add_summary(
             summary=summary,
             level=0,
             source_paths=[source_path],
-            metadata={"history_id": history_id, "concepts": concept_keywords, "reasoning": reasoning}
+            metadata={"history_id": history_id, "concepts": ["general"]}
         )
         
         print(f"Added summary to level 0")

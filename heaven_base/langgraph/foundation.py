@@ -2050,8 +2050,8 @@ async def demo_heaven_foundation():
 # 🔍 testing: See test_pattern.py for testing approaches
 # """
 #
-# from computer_use_demo.tools.base.baseheavenagent import HeavenAgentConfig
-# from computer_use_demo.tools.base.unified_chat import ProviderEnum
+# from heaven_base.baseheavenagent import HeavenAgentConfig
+# from heaven_base.unified_chat import ProviderEnum
 #
 # # 🔍 agent_class: Define your agent class here
 # # Pattern: class YourAgentName(HeavenAgentConfig):
@@ -2254,8 +2254,8 @@ async def demo_heaven_foundation():
 # I'll create a quantum computing agent for you:
 #
 # ```python
-# from computer_use_demo.tools.base.baseheavenagent import HeavenAgentConfig
-# from computer_use_demo.tools.base.unified_chat import ProviderEnum
+# from heaven_base.baseheavenagent import HeavenAgentConfig
+# from heaven_base.unified_chat import ProviderEnum
 #
 # class QuantumComputingAgent(HeavenAgentConfig):
 #     def __init__(self):

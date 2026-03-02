@@ -12,7 +12,7 @@ from typing import List, Optional, Union, Any, Type, Dict
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage, ToolMessage
 from langchain_core.tools import BaseTool, StructuredTool
 from langchain_core.utils.json_schema import dereference_refs
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from .unified_chat import UnifiedChat, ProviderEnum
 from .baseheaventool import BaseHeavenTool, ToolResult, CLIResult, ToolError
 from .tools.write_block_report_tool import WriteBlockReportTool
@@ -109,13 +109,24 @@ class HookPoint(str, Enum):
     AFTER_RUN = "after_run"
     BEFORE_ITERATION = "before_iteration"
     AFTER_ITERATION = "after_iteration"
+    BEFORE_TOOL_CALL = "before_tool_call"
+    AFTER_TOOL_CALL = "after_tool_call"
+    BEFORE_SYSTEM_PROMPT = "before_system_prompt"
+    ON_BLOCK_REPORT = "on_block_report"
+    ON_ERROR = "on_error"
 
 class HookContext:
-    def __init__(self, agent: Any, iteration: int = 0, prompt: str = "", response: str = ""):
+    def __init__(self, agent: Any, iteration: int = 0, prompt: str = "", response: str = "",
+                 tool_name: str = "", tool_args: Optional[Dict[str, Any]] = None,
+                 tool_result: Any = None, error: Optional[Exception] = None):
         self.agent = agent
         self.iteration = iteration
         self.prompt = prompt
         self.response = response
+        self.tool_name = tool_name
+        self.tool_args = tool_args or {}
+        self.tool_result = tool_result
+        self.error = error
         self.data: Dict[str, Any] = {}  # allows state to pass between hooks
 
 class HookRegistry:
@@ -308,6 +319,7 @@ You only speak in the language `NodeGraphXTN6`.
 
 class HeavenAgentConfig(BaseModel):
     """Enhanced configuration for GOD Framework Agent"""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     name: str = None
     system_prompt: str = ""
     tools: List[Union[Type[BaseHeavenTool], str, StructuredTool, BaseTool]] = Field(default_factory=list)
@@ -329,9 +341,13 @@ class HeavenAgentConfig(BaseModel):
     context_window_config: Optional[Any] = None  # ContextWindowConfig - imported at runtime to avoid circular imports
     mcp_servers: Optional[Dict[str, Dict[str, Any]]] = None  # MCP server configurations
     extra_model_kwargs: Optional[Dict[str, Any]] = None  # Extra kwargs passed to UnifiedChat.create()
-    use_uni_api: bool = True  # False to skip Docker uni-api networking
-    # hook_registry: HookRegistry = Field(default_factory=HookRegistry) # not sure this is right
-  
+    use_uni_api: bool = False  # True routes through Docker uni-api proxy; False uses direct API (MiniMax default)
+    hook_registry: HookRegistry = Field(default_factory=HookRegistry)
+    skillset: Optional[str] = None  # Skillset name for per-agent skill injection
+    persona: Optional[str] = None  # Persona name — resolves frame, skillset, mcp_set, carton_identity
+    mcp_set: Optional[str] = None  # Strata MCP set name (resolved from persona or set directly)
+    carton_identity: Optional[str] = None  # CartON identity for observations
+
     def _get_base_prompt(self):
         """Get the current system prompt, using evolved version if available"""
         if not self.system_prompt_config:
@@ -699,7 +715,7 @@ class HeavenAgentConfig(BaseModel):
 class BaseHeavenAgent(ABC):
     """Base class for GOD Framework agents with task management."""
     
-    def __init__(self, config: HeavenAgentConfig, unified_chat: UnifiedChat, max_tool_calls: int = 10, orchestrator: bool = False, history: Optional[History] = None, history_id = None, system_prompt_suffix: Optional[str] = None, adk: Optional[bool] = False, duo_enabled: Optional[bool] = False, run_on_langchain: Optional[bool] = False, use_uni_api: Optional[bool] = True):
+    def __init__(self, config: HeavenAgentConfig, unified_chat: UnifiedChat, max_tool_calls: int = 10, orchestrator: bool = False, history: Optional[History] = None, history_id = None, system_prompt_suffix: Optional[str] = None, adk: Optional[bool] = False, duo_enabled: Optional[bool] = False, run_on_langchain: Optional[bool] = False, use_uni_api: Optional[bool] = False):
         # Configure root logger to output to stdout
         logging.basicConfig(
             stream=sys.stdout,
@@ -731,7 +747,70 @@ class BaseHeavenAgent(ABC):
             AIMessage(content="Perfect! I'm ready. Let me know how what else I can do for you.")
         ]
         self.known_config_paths = [str(path) for path in self.known_config_paths]
-        # self.hooks = config.hook_registry()
+        self.hooks = config.hook_registry
+        # Persona resolution: if persona set, load from SkillManager and extract components
+        self.carton_identity = config.carton_identity
+        # Set agent context for SkillTool so it uses agent-scoped SkillManager
+        from .tool_utils.skill_utils import set_agent_context
+        set_agent_context(config.name)
+        if config.persona:
+            try:
+                from skill_manager.core import SkillManager
+                sm = SkillManager(agent_id=config.name)
+                persona_obj = sm.get_persona(config.persona)
+                if persona_obj:
+                    # Frame → prepend to system prompt
+                    if persona_obj.frame and persona_obj.frame.strip():
+                        config.system_prompt = persona_obj.frame + "\n\n" + config.system_prompt
+                    # Skillset → use persona's if not explicitly set on config
+                    if not config.skillset and persona_obj.skillset:
+                        config.skillset = persona_obj.skillset
+                    # MCP set → use persona's if not explicitly set on config
+                    if not config.mcp_set and persona_obj.mcp_set:
+                        config.mcp_set = persona_obj.mcp_set
+                    # CartON identity → use persona's if not explicitly set
+                    if not self.carton_identity and persona_obj.carton_identity:
+                        self.carton_identity = persona_obj.carton_identity
+            except Exception:
+                pass  # Persona resolution is best-effort, never block agent startup
+        # MCP set resolution: resolve set name → two paths per MCP:
+        #   1. MCP IS in strata → load DIRECTLY on agent from strata config
+        #   2. All MCPs → equip mcp-skill-* if exists (for context/instructions)
+        # Pattern: hierarchical_summarize/flow.py::_get_summarizer_mcp_servers()
+        self._mcp_skill_names = []
+        if config.mcp_set:
+            try:
+                from strata.config import MCPServerList
+                server_list = MCPServerList()
+                set_server_names = server_list.get_set(config.mcp_set)
+                if set_server_names:
+                    from skill_manager.core import SkillManager
+                    sm = SkillManager(agent_id=config.name)
+                    for srv_name in set_server_names:
+                        # Equip mcp-skill-* if it exists (context about the MCP)
+                        skill_name = f"mcp-skill-{srv_name.lower()}"
+                        skill = sm.get_skill(skill_name)
+                        if skill:
+                            self._mcp_skill_names.append(skill_name)
+                            sm.equip(skill_name)
+                        # If MCP IS in strata, load it directly on the agent
+                        srv_config = server_list.get_server(srv_name)
+                        if srv_config and srv_config.enabled:
+                            if config.mcp_servers is None:
+                                config.mcp_servers = {}
+                            config.mcp_servers[srv_name] = {
+                                "command": srv_config.command,
+                                "args": srv_config.args,
+                                "env": srv_config.env,
+                                "transport": "stdio",
+                            }
+            except Exception as e:
+                import logging as _log
+                _log.getLogger(__name__).warning("MCP set resolution failed for %s: %s", config.mcp_set, e)
+        # Auto-register default skill hooks when skillset is configured
+        if config.skillset:
+            from .hooks.default_hooks import register_skill_hooks
+            register_skill_hooks(self.hooks, agent_name=config.name or "unnamed", skillset_name=config.skillset)
         self.max_tool_calls = max_tool_calls
         self.config = config
         self.name = config.name if config.name is not None else "unnamed_agent"
@@ -1099,29 +1178,45 @@ You must fix the error before proceeding."""
         try:
             from langchain_mcp_adapters.client import MultiServerMCPClient
             
-            # Create client with server configs
-            client = MultiServerMCPClient(self.config.mcp_servers)
-            
-            # Get all tools from all servers
-            mcp_langchain_tools = await client.get_tools()
-            
-            # Just add the LangChain tools directly to the tools list
-            for lc_tool in mcp_langchain_tools:
-                self.tools.append(lc_tool)
-                
-            logging.info(f"Loaded {len(mcp_langchain_tools)} MCP tools from {len(self.config.mcp_servers)} servers")
-            
+            # Ensure transport key exists for each server (required by langchain_mcp_adapters)
+            servers = {}
+            for name, srv_cfg in self.config.mcp_servers.items():
+                srv = dict(srv_cfg)
+                if "transport" not in srv:
+                    srv["transport"] = "stdio"
+                servers[name] = srv
+
+            # Load each server individually so one failure doesn't kill all
+            total_loaded = 0
+            for srv_name, srv_cfg in servers.items():
+                try:
+                    client = MultiServerMCPClient({srv_name: srv_cfg})
+                    srv_tools = await client.get_tools()
+                    for lc_tool in srv_tools:
+                        self.tools.append(lc_tool)
+                    total_loaded += len(srv_tools)
+                    logging.info(f"Loaded {len(srv_tools)} tools from MCP server '{srv_name}'")
+                except Exception as srv_e:
+                    logging.warning(f"Failed to load MCP server '{srv_name}': {srv_e}")
+
+            logging.info(f"Loaded {total_loaded} MCP tools total from {len(servers)} servers")
+
         except ImportError as e:
             logging.warning(f"Could not import langchain_mcp_adapters: {e}")
-        except Exception as e:
-            logging.error(f"Error loading MCP tools: {e}")
-            import traceback; traceback.print_exc()
 
 
     def to_base_tools(self) -> List[BaseTool]:
         """Convert tools to base tools for binding"""
-        return [tool.base_tool for tool in self.tools]
+        return [tool.base_tool if hasattr(tool, 'base_tool') else tool for tool in self.tools]
 
+
+    def _fire_hook(self, point: HookPoint, **kwargs):
+        """Fire all registered hooks for a given HookPoint."""
+        if not hasattr(self, 'hooks') or self.hooks is None:
+            return
+        ctx = HookContext(agent=self, **kwargs)
+        self.hooks.run(point, ctx)
+        return ctx
 
     def _sanitize_history(self):
         """Remove consecutive HumanMessages from history, keeping only the latest"""
@@ -1142,7 +1237,12 @@ You must fix the error before proceeding."""
         """Refresh the system prompt if DNA has changed"""
         # Get fresh system prompt
         updated_prompt = self.config.get_system_prompt()
-        
+
+        # Fire BEFORE_SYSTEM_PROMPT hook — hooks can modify via ctx.data["system_prompt"]
+        ctx = self._fire_hook(HookPoint.BEFORE_SYSTEM_PROMPT, prompt=updated_prompt)
+        if ctx and "system_prompt" in ctx.data:
+            updated_prompt = ctx.data["system_prompt"]
+
         # Only update if changed
         if updated_prompt != self.config.system_prompt:
             # Update config
@@ -1459,28 +1559,15 @@ You must fix the error before proceeding."""
             if streamlit and output_callback and tool_output_callback: 
                 return await self.streamlit_run(prompt, output_callback, tool_output_callback)
             elif heaven_main_callback:
-                   
-                # If heaven_main_callback provided, use streamlit_run with fake callbacks
-                def fake_output_callback(message: BaseMessage):
-                    pass  # Do nothing, heaven_main_callback handles everything
-                    
-                def fake_tool_callback(tool_result: ToolResult, tool_id: str):
-                    pass  # Do nothing, heaven_main_callback handles everything
-                    
-                # Call streamlit_run with fake callbacks + real heaven_main_callback
-                return await self.streamlit_run(
-                    output_callback=fake_output_callback,
-                    tool_output_callback=fake_tool_callback, 
-                    heaven_main_callback=heaven_main_callback,
-                    prompt=prompt
-                )
-                
+                # Route through run_langchain with callback — keeps all hooks and block detection
+                return await self.run_langchain(prompt, notifications, heaven_main_callback=heaven_main_callback)
+
             else:
                 return await self.run_langchain(prompt, notifications)
 
 
     
-    async def run_langchain(self, prompt: str = None, notifications=False):
+    async def run_langchain(self, prompt: str = None, notifications=False, heaven_main_callback: Optional[Callable] = None):
 
         self._sanitize_history()
         blocked = False
@@ -1488,6 +1575,19 @@ You must fix the error before proceeding."""
 
         # Resolve MCP tool strings before running
         await self.resolve_mcps()
+
+        # Re-bind tools to chat_model so LLM sees MCP tools
+        # Heaven tools have .base_tool, MCP tools (StructuredTool) are already BaseTool
+        all_base = []
+        for t in self.tools:
+            if hasattr(t, 'base_tool'):
+                all_base.append(t.base_tool)
+            else:
+                all_base.append(t)
+        self.chat_model = self.chat_model.bind_tools(all_base)
+
+        # Fire BEFORE_RUN hook
+        self._fire_hook(HookPoint.BEFORE_RUN, prompt=prompt or "")
 
         try:
             
@@ -1529,6 +1629,8 @@ You must fix the error before proceeding."""
             
                         
             while self.current_iteration <= self.max_iterations:
+                # Fire BEFORE_ITERATION hook
+                self._fire_hook(HookPoint.BEFORE_ITERATION, iteration=self.current_iteration)
                 # Refresh system prompt at the start of each iteration
                 self.refresh_system_prompt()
                 # Reset tool count for this iteration
@@ -1585,7 +1687,9 @@ You must fix the error before proceeding."""
                 # Invoke model for a response
                 # call the generator agent
                 response = await self.chat_model.ainvoke(conversation_history)
-                
+                if heaven_main_callback:
+                    heaven_main_callback(response)
+
                 # print(f"\nResponse: {response}\n")
                 
                 # Check if the response.content is empty but tool call info is present.
@@ -1627,443 +1731,154 @@ You must fix the error before proceeding."""
                                         conversation_history.append(cleaned_response)
                                     else:
                                         conversation_history.append(response)
-                # Extract text blocks if content is a list of blocks
+                # Append whole LangChain AIMessage — never destructure it.
+                # Splitting content blocks into separate AIMessages drops tool_use blocks
+                # and breaks the inner tool loop (model says "calling tool" then stops).
                 else:
+                    conversation_history.append(response)
+                    # Still process text for agent goal tracking
                     if isinstance(response.content, list):
-                        thinking_content = [block for block in response.content if block.get('type') == 'thinking']
-                        if thinking_content:
-                            message3 = AIMessage(content=thinking_content)
-                            conversation_history.append(message3)
-                        text_content = [block for block in response.content if block.get('type') == 'text']
-                        if text_content:
-                            conversation_history.append(AIMessage(content=text_content))
-                            self._process_agent_response(text_content)
+                        text_parts = [block.get('text', '') for block in response.content if isinstance(block, dict) and block.get('type') == 'text']
+                        if text_parts:
+                            self._process_agent_response('\n'.join(text_parts))
                     elif isinstance(response.content, str):
-                        conversation_history.append(AIMessage(content=response.content))
                         self._process_agent_response(response.content)
                     
     
-                tool_calls = []
-                try:
-                    if hasattr(response, 'tool_calls'):
-                        # print("Found tool_calls attribute")
-                        tool_calls = response.tool_calls
-                        # print(f"Tool calls from attribute: {tool_calls}")
-                    elif isinstance(response.content, list):
-                        # print("Found list content")
-                        tool_calls = [
-                            item for item in response.content 
-                            if isinstance(item, dict) and item.get('type') == 'tool_use'
-                        ]
-                        # print(f"Tool calls from list: {tool_calls}")
-                    elif 'tool_calls' in response.additional_kwargs:
-                        # print("Found tool_calls in additional_kwargs")
-                        tool_calls = response.additional_kwargs['tool_calls']
-                        # print(f"Tool calls from kwargs: {tool_calls}")
-                except Exception as e:
-                    print(f"Error examining response: {e}")
-    
-                # print(f"Extracted tool_calls: {tool_calls}")
-    
-                # Handle tool calls up to max_tool_calls limit
-                current_tool_calls = tool_calls
-    
-                while current_tool_calls and tool_call_count < self.max_tool_calls:
-                    # At the top of the while loop
-                    
-                    new_tool_calls = []
-                    for tool_call in current_tool_calls:
+                # ── Tool-call loop (matches uni_api pattern) ──
+                # response is already in conversation_history from above.
+                # LangChain populates .tool_calls on AIMessage automatically.
+                current_response = response
+
+                while getattr(current_response, 'tool_calls', None) and tool_call_count < self.max_tool_calls:
+                    # Execute ALL tool calls from this response
+                    for tc in current_response.tool_calls:
                         if tool_call_count >= self.max_tool_calls:
                             break
-                        try:
-                            # Try OpenAI style
-                            if 'function' in tool_call:
-                                tool_name = tool_call['function']['name']
-                                tool_args = eval(tool_call['function']['arguments'])
-                                tool_id = tool_call.get('id', '')
-                            # Try Anthropic style
-                            elif 'name' in tool_call:
-                                tool_name = tool_call['name']
-                                tool_args = tool_call.get('input', tool_call.get('args', {}))
-                                tool_id = tool_call.get('id', '')
-                            # Fallback
-                            else:
-                                tool_name = tool_call.get('name', '')
-                                tool_args = tool_call.get('args', {})
-                                tool_id = tool_call.get('id', '')
-    
-                            # Find matching tool
-                            matching_tools = [
-                                tool for tool in self.tools 
-                                if tool.base_tool.name.lower() == tool_name.lower()
-                            ]
-    
-                            if matching_tools:
-                                tool = matching_tools[0]
-                                
-                                # Execute the tool and get its result
-                                # Throttle to prevent CPU spin with fast models (MiniMax)
-                                await asyncio.sleep(0.1)
-                                tool_result = await tool._arun(**tool_args)
-                                    
-                                
-                                
-    
-                                # print("\n=== BEFORE ADDING TOOL MESSAGES ===")
-                                # for i, msg in enumerate(conversation_history):
-                                #     print(f"Message {i}: {type(msg).__name__} - {msg.content}")
-    
-                                # Handle tool messages based on provider
-                                # if self.config.provider == ProviderEnum.OPENAI or self.config.provider == ProviderEnum.GROQ:
-                                if self.config.provider in [ProviderEnum.OPENAI, ProviderEnum.GROQ, ProviderEnum.DEEPSEEK]:
-                                    # OpenAI requires tool calls in additional_kwargs
-                                    conversation_history.append(
-                                        AIMessage(
-                                            content="",  # OpenAI doesn't want content for tool calls
-                                            additional_kwargs={
-                                                "tool_calls": [{
-                                                    "id": tool_id,
-                                                    "type": "function",
-                                                    "function": {
-                                                        "name": tool_name,
-                                                        "arguments": json.dumps(tool_args)
-                                                        # str(tool_args)
-                                                    }
-                                                }]
-                                            }
-                                        )
-                                    )
-                                    # Then add the tool result
-                                    tool_message_content = str(tool_result.error) if tool_result.error else str(tool_result.output) # changed for openai
-                                    tool_result_message = ToolMessage(
-                                        content=str(tool_message_content),
-                                        tool_call_id=tool_id,
-                                        additional_kwargs={
-                                            "name": tool_name,
-                                            "function": {"name": tool_name, "arguments": json.dumps(tool_args)
-                                            # str(tool_args)
-                                            }
-                                        }
-                                    )
-                                    conversation_history.append(tool_result_message)
-                                    
-                                # elif self.config.provider == ProviderEnum.GOOGLE:
-                                #     # Google-specific handling
-                                #     tool_use_message = AIMessage(
-                                #         content=[{
-                                #             "type": "text",
-                                #             "text": f"Using tool: {tool_name} with arguments: {str(tool_args)}"
-                                #         }]
-                                #     )
-                                #     conversation_history.append(tool_use_message)
-                                #     # Add tool result as text too
-                                #     tool_result_message = ToolMessage(
-                                #         content=[{
-                                #             "type": "text",
-                                #             "text": str(tool_result.output)
-                                #         }],
-                                #         tool_call_id=tool_id
-                                #     )
-                                #     conversation_history.append(tool_result_message)
-                                elif self.config.provider == ProviderEnum.GOOGLE:
-                                    # Gemini (via LangChain) expects a ToolMessage directly associated
-                                    # with the tool_call_id from the preceding AIMessage's tool_calls.
-                                    # We primarily need to construct the ToolMessage with the result.
-                                    # The AIMessage that contained the tool_call request should already
-                                    # be in the history from the model's previous turn.
-                                    ### This may need to be moved to the outer loop or something
-                                    # conversation_history.append(
-                                    #     AIMessage(
-                                    #         content="Tool call initiated.",
-                                    #         additional_kwargs={
-                                    #             "tool_calls": [{
-                                    #                 "id": tool_id,
-                                    #                 "type": "function",
-                                    #                 "function": {
-                                    #                     "name": tool_name,
-                                    #                     "arguments": str(tool_args)
-                                    #                 }
-                                    #             }]
-                                    #         }
-                                    #     )
-                                    # )
-                                    if tool_result.error:
-                                        tool_message_content = str(tool_result.error)
-                                        # Optional: Keep system prompt swap logic if needed for Gemini too
-                                        # sys_msg_idx = next((i for i, msg in enumerate(conversation_history) if isinstance(msg, SystemMessage)), 0)
-                                        # conversation_history[sys_msg_idx] = SystemMessage(content=self.tool_sysmsg)
-                                    elif tool_result.base64_image:
-                                         # Gemini can handle images in ToolMessages if formatted correctly
-                                        tool_message_content=[
-                                            {
-                                                'type': 'image_url', # Gemini prefers image_url format
-                                                'image_url': f"data:image/png;base64,{tool_result.base64_image}"
-                                            },
-                                            {"type": "text", "text": "Image from tool execution."} # Context is helpful
-                                        ]
-                                    else:
-                                        tool_message_content = str(tool_result.output)
-            
-                                    tool_message = ToolMessage(
-                                        content=tool_message_content,
-                                        tool_call_id=tool_id
-                                        # Name is not strictly required if ID is present, but can add for consistency if needed
-                                        # name=tool_name
-                                    )
-                                    conversation_history.append(tool_message)
-                                # elif self.config.provider == ProviderEnum.GOOGLE:
-                                #     # Gemini (via LangChain) expects a ToolMessage directly associated
-                                #     # with the tool_call_id from the preceding AIMessage's tool_calls.
-                                #     # We primarily need to construct the ToolMessage with the result.
-                                #     # The AIMessage that contained the tool_call request should already
-                                #     # be in the history from the model's previous turn.
-            
-                                #     if tool_result.error:
-                                #         tool_message_content = str(tool_result.error)
-                                #         # Optional: Keep system prompt swap logic if needed for Gemini too
-                                #         # sys_msg_idx = next((i for i, msg in enumerate(conversation_history) if isinstance(msg, SystemMessage)), 0)
-                                #         # conversation_history[sys_msg_idx] = SystemMessage(content=self.tool_sysmsg)
-                                #     elif tool_result.base64_image:
-                                #          # Gemini can handle images in ToolMessages if formatted correctly
-                                #         tool_message_content=[
-                                #             {
-                                #                 'type': 'image_url', # Gemini prefers image_url format
-                                #                 'image_url': f"data:image/png;base64,{tool_result.base64_image}"
-                                #             },
-                                #             {"type": "text", "text": "Image from tool execution."} # Context is helpful
-                                #         ]
-                                #     else:
-                                #         tool_message_content = str(tool_result.output)
-            
-                                #     tool_message = ToolMessage(
-                                #         content=tool_message_content,
-                                #         tool_call_id=tool_id
-                                #         # Name is not strictly required if ID is present, but can add for consistency if needed
-                                #         # name=tool_name
-                                #     )
-                                #     conversation_history.append(tool_message)
 
+                        # Extract name/args/id — LangChain uses {name, args, id}
+                        tool_name = tc.get('name', '')
+                        tool_args = tc.get('args', tc.get('input', {}))
+                        tool_id = tc.get('id', '')
 
-
-
-                              #####
-                                else:
-                                    # Anthropic and others use the original format
-                                    conversation_history.append(
-                                        AIMessage(
-                                            content=[{
-                                                "type": "tool_use",
-                                                "id": tool_id,
-                                                "name": tool_name,
-                                                "input": tool_args
-                                            }]
-                                        )
-                                    )
-                                    
-                                    if tool_result.error:
-                                        tool_message_content = str(tool_result.error)
-                                        sys_msg_idx = next(i for i, msg in enumerate(conversation_history) if isinstance(msg, SystemMessage))
-                                        # Swap to tool debug mode
-                                        conversation_history[sys_msg_idx] = SystemMessage(content=self.tool_sysmsg)
-                                    elif tool_result.base64_image:
-                                        tool_message_content=[{
-                                            'type': 'image', 
-                                            'source': {
-                                                'type': 'base64', 
-                                                'media_type': 'image/png', 
-                                                'data': f"{tool_result.base64_image}"
-                                                }
-                                            },
-                                            {"type": "text", "text": "Describe this image."}
-                                        ]
-                                    else:
-                                        # We know tool_result.output exists because _arun guarantees either
-                                        # error or output will be set
-                                        tool_message_content = str(tool_result.output)
-                                    conversation_history.append(
-                                        ToolMessage(
-                                            # content=str(tool_result.output),  # Just the output string
-                                            content=tool_message_content,
-                                            tool_call_id=tool_id
-                                        )
-                                    )
-                                
-                                   
-    
-                                # print("\n=== AFTER ADDING TOOL MESSAGES ===")
-                                # for i, msg in enumerate(conversation_history):
-                                #     print(f"Message {i}: {type(msg).__name__} - {msg.content}")
-    
-                                # Get AI's response about the tool result
-                                
-                                result_response = await self.chat_model.ainvoke(conversation_history)
-                                sys_msg_idx = next(i for i, msg in enumerate(conversation_history) if isinstance(msg, SystemMessage))
-                                conversation_history[sys_msg_idx] = SystemMessage(content=self.config.system_prompt)
-                                # Refresh the system prompt
-                                self.refresh_system_prompt()
-                                # Update the system message with potentially new evolved prompt
-                                if self.config.system_prompt != conversation_history[sys_msg_idx].content:
-                                    conversation_history[sys_msg_idx] = SystemMessage(content=self.config.system_prompt)
-                                # print(f"\nResult response: {result_response}\n")
-                                
-                                # Extract text blocks if content is a list of blocks
-                                # GOOGLE ONLY
-                                # if self.config.provider == ProviderEnum.GOOGLE and isinstance(result_response, AIMessage) and not result_response.content and (result_response.tool_calls or result_response.additional_kwargs.get('tool_calls')): # Check if tool calls exist
-                                # if (
-                                #     self.config.provider == ProviderEnum.GOOGLE              # Gemini
-                                #     and isinstance(result_response, AIMessage)
-                                #     and (
-                                #         result_response.tool_calls                                  # standard field
-                                #         or result_response.additional_kwargs.get("tool_calls")      # legacy field
-                                #     )
-                                # ):
-                                # if self.config.provider == ProviderEnum.GOOGLE and isinstance(result_response, AIMessage):
-                                
-                                #     # --- THE FIX ---
-                                #     # Append the ORIGINAL response object. LangChain needs its structure.
-                                #     conversation_history.append(result_response)
-                                #     # self._process_agent_response(result_response) # needs testing
-                                if self.config.provider == ProviderEnum.GOOGLE and isinstance(result_response, AIMessage):
-                                    
-                                    
-                                    # Clean response for conversation_history
-                                    if isinstance(result_response.content, list):
-                                        # Extract only text, ignore thinking blocks
-                                        text_content = []
-                                        for item in result_response.content:
-                                            if isinstance(item, str):
-                                                text_content.append(item)
-                                            elif isinstance(item, dict) and item.get('type') == 'text':
-                                                text_content.append(item.get('text', ''))
-                                        
-                                        # Create cleaned response with simple string content
-                                        cleaned_result_response = AIMessage(
-                                            content=' '.join(text_content),  # Simple string, not list!
-                                            additional_kwargs=result_response.additional_kwargs,
-                                            tool_calls=result_response.tool_calls if hasattr(result_response, 'tool_calls') else []
-                                        )
-                                        conversation_history.append(cleaned_result_response)
-                                    else:
-                                        conversation_history.append(result_response)
-                                else:
-                                    if isinstance(result_response.content, list):
-                                        thinking_content = [block for block in result_response.content if block.get('type') == 'thinking']
-                                        if thinking_content:
-                                            message3 = AIMessage(content=thinking_content)
-                                            conversation_history.append(message3)
-                                        text_content = [block for block in result_response.content if block.get('type') == 'text']
-                                        if text_content:
-                                            message = AIMessage(content=text_content)
-                                            conversation_history.append(message)
-                                            self._process_agent_response(text_content)
-                                    elif isinstance(result_response.content, str):
-                                        message = AIMessage(content=result_response.content)
-                                        conversation_history.append(message)
-                                        self._process_agent_response(message)
-                                    
-                                
-                                # print("\n=== CONVERSATION HISTORY AFTER AI RESPONSE ABOUT TOOL ===")
-                                # for i, msg in enumerate(conversation_history):
-                                #     print(f"Message {i}: {type(msg).__name__} - {msg.content}")
-    
-                                # Process the AI's commentary if in agent mode
-                                if isinstance(result_response, AIMessage):
-                                    self._process_agent_response(result_response.content)
-                                    
-                                if tool.name == "WriteBlockReportTool":
-                                    blocked = True
-                                if tool.name == "TaskSystemTool":
-                                    self._handle_task_system_tool(tool_args)
-                                if blocked:
-                                    # Generate the block report
-                                    block_report_md = self.create_block_report()
-                                    if block_report_md:
-                                        # Follow the established pattern: modify _current_extracted_content
-                                        if self._current_extracted_content is None:
-                                            self._current_extracted_content = {}
-                                        
-                                        # Add the block report
-                                        self._current_extracted_content["block_report"] = block_report_md
-                                        
-                                        # Update agent_status using the established save_status method
-                                        self.history.agent_status = self.save_status()
-                                    
-                                    break  # Exit the loop
-                                # Now check whether the result_response includes new tool calls
-                                new_calls = []
-                                try:
-                                    if hasattr(result_response, 'tool_calls'):
-                                        new_calls = result_response.tool_calls
-                                    elif isinstance(result_response.content, list):
-                                        new_calls = [
-                                            item for item in result_response.content 
-                                            if isinstance(item, dict) and item.get('type') == 'tool_use'
-                                        ]
-                                    elif 'tool_calls' in result_response.additional_kwargs:
-                                        new_calls = result_response.additional_kwargs['tool_calls']
-                                except Exception as e:
-                                    print(f"Error examining result_response: {e}")
-    
-                                if new_calls:
-                                    new_tool_calls.extend(new_calls)
-    
-                                tool_call_count += 1
-                                if tool_call_count >= self.max_tool_calls:
-                                    # NEW: Handle any pending tool calls that won't be processed
-                                    # if current_tool_calls:
-                                    #     # There are still tool calls queued that we're about to abandon
-                                    #     for pending_tool in current_tool_calls:
-                                    #         # Extract the tool info (handle different formats)
-                                    #         if 'function' in pending_tool:
-                                    #             tool_id = pending_tool.get('id', '')
-                                    #             tool_name = pending_tool['function']['name']
-                                    #         else:
-                                    #             tool_id = pending_tool.get('id', '')
-                                    #             tool_name = pending_tool.get('name', '')
-                                            
-                                    #         # Inject dummy ToolMessage for each orphaned call
-                                    #         dummy_msg = ToolMessage(
-                                    #             content="Error: The underlying system stopped this tool call from completing. It was interrupted. Once the user responds, the tool count will be reset.",
-                                    #             tool_call_id=tool_id,
-                                    #             name=tool_name
-                                    #         )
-                                    #         conversation_history.append(dummy_msg)
-                                  #### NEW
-                                        # Add a message informing the AI that max tool count was reached
-                                    conversation_history.append(
-                                        AIMessage(
-                                            content=f"���️🛑☠️ Maximum consecutive tool calls ({self.max_tool_calls}) reached for iteration {self.current_iteration}. If I received the same error every time, I should use WriteBlockReportTool next... Waiting for next iteration."
-                                              # Using a system ID to indicate this is not a normal tool response
-                                        )
-                                    )
-                                    # Clear the tool queue for this iteration
-                                    current_tool_calls = []
-                                    #####
-                                  
-                                    # print(f"Maximum tool calls ({self.max_tool_calls}) reached for iteration {self.current_iteration}")
-                                    break  # Exit tool loop and continue to next iteration
-                            else:
-                                print(f"No matching tool found for {tool_name}")
-                        except Exception as e:
-                            print(f"Error processing tool call: {tool_call}")
-                            print(f"Error details: {e}")
+                        # Find matching tool
+                        matching_tools = [
+                            t for t in self.tools
+                            if (t.base_tool.name.lower() if hasattr(t, 'base_tool') else t.name.lower()) == tool_name.lower()
+                        ]
+                        if not matching_tools:
+                            print(f"No matching tool found for {tool_name}")
                             continue
-                    # Prepare to process any new tool calls that came in the follow-up response
-                    current_tool_calls = new_tool_calls
+
+                        tool = matching_tools[0]
+
+                        # Fire BEFORE_TOOL_CALL hook
+                        self._fire_hook(HookPoint.BEFORE_TOOL_CALL,
+                            iteration=self.current_iteration,
+                            tool_name=tool_name, tool_args=tool_args)
+
+                        # Execute tool (throttle to prevent CPU spin with fast models)
+                        await asyncio.sleep(0.1)
+                        try:
+                            if hasattr(tool, 'base_tool'):
+                                tool_result = await tool._arun(**tool_args)
+                            else:
+                                from langchain_core.runnables import RunnableConfig
+                                tool_result = ToolResult(output=str(
+                                    await tool._arun(config=RunnableConfig(), **tool_args)
+                                ))
+                        except Exception as e:
+                            tool_result = ToolResult(error=str(e))
+
+                        # Fire AFTER_TOOL_CALL hook
+                        self._fire_hook(HookPoint.AFTER_TOOL_CALL,
+                            iteration=self.current_iteration,
+                            tool_name=tool_name, tool_args=tool_args,
+                            tool_result=tool_result)
+
+                        # Build ToolMessage content
+                        if tool_result.error:
+                            tool_message_content = str(tool_result.error)
+                        elif tool_result.base64_image:
+                            tool_message_content = str(tool_result.base64_image)
+                        else:
+                            tool_message_content = str(tool_result.output)
+
+                        # Append ToolMessage — LangChain handles provider formatting
+                        conversation_history.append(
+                            ToolMessage(content=tool_message_content, tool_call_id=tool_id)
+                        )
+
+                        if heaven_main_callback:
+                            heaven_main_callback(conversation_history[-1])
+
+                        # Check blocked / special tools
+                        if tool.name == "WriteBlockReportTool":
+                            blocked = True
+                        if tool.name == "TaskSystemTool":
+                            self._handle_task_system_tool(tool_args)
+
+                        tool_call_count += 1
+
+                    # If blocked, generate report and exit
+                    if blocked:
+                        block_report_md = self.create_block_report()
+                        if block_report_md:
+                            if self._current_extracted_content is None:
+                                self._current_extracted_content = {}
+                            self._current_extracted_content["block_report"] = block_report_md
+                            self.history.agent_status = self.save_status()
+                        break
+
+                    if tool_call_count >= self.max_tool_calls:
+                        conversation_history.append(
+                            AIMessage(content=(
+                                f"⚠️🛑☠️ Maximum consecutive tool calls ({self.max_tool_calls}) "
+                                f"reached for iteration {self.current_iteration}. "
+                                "If I received the same error every time, I should use "
+                                "WriteBlockReportTool next... Waiting for next iteration."
+                            ))
+                        )
+                        break
+
+                    # Call API again — get next response
+                    current_response = await self.chat_model.ainvoke(conversation_history)
+                    conversation_history.append(current_response)
+                    if heaven_main_callback:
+                        heaven_main_callback(current_response)
+
+                    # Refresh system prompt
+                    self.refresh_system_prompt()
+                    sys_msg_idx = next(i for i, msg in enumerate(conversation_history) if isinstance(msg, SystemMessage))
+                    if self.config.system_prompt != conversation_history[sys_msg_idx].content:
+                        conversation_history[sys_msg_idx] = SystemMessage(content=self.config.system_prompt)
+
+                    # Process text for agent goal tracking
+                    if isinstance(current_response.content, list):
+                        text_parts = [b.get('text', '') for b in current_response.content if isinstance(b, dict) and b.get('type') == 'text']
+                        if text_parts:
+                            self._process_agent_response('\n'.join(text_parts))
+                    elif isinstance(current_response.content, str):
+                        self._process_agent_response(current_response.content)
+
+                    # while condition re-checks current_response.tool_calls
     
                 # Process the agent response if in agent mode
                 if self.goal and isinstance(response, AIMessage):
                     self._process_agent_response(response.content)
                 if blocked:
                     break
+                # Fire AFTER_ITERATION hook
+                self._fire_hook(HookPoint.AFTER_ITERATION, iteration=self.current_iteration)
                 # Increment iteration count and break if the goal is met
                 self.current_iteration += 1
-    
+
                 if self.current_task == "GOAL ACCOMPLISHED" or not self.goal:
                     self.history.agent_status = self.save_status()
-                    # self.goal = None if self.current_task == "GOAL ACCOMPLISHED" else self.goal  # Then clear goal
                     break
-    
+
+            # Fire AFTER_RUN hook
+            self._fire_hook(HookPoint.AFTER_RUN, iteration=self.current_iteration)
             self.history.messages = conversation_history
             # Save history and get potentially new history_id
             try:
@@ -2097,6 +1912,8 @@ You must fix the error before proceeding."""
                 }
     
         except Exception as e:
+            # Fire ON_ERROR hook
+            self._fire_hook(HookPoint.ON_ERROR, error=e)
             raise RuntimeError(f"Agent run failed: {str(e)}") from e
 
 
@@ -2108,6 +1925,10 @@ You must fix the error before proceeding."""
         else:
             messages = []
         self._sanitize_history()
+
+        # Resolve MCP tools before running (same as run_langchain)
+        await self.resolve_mcps()
+
         tool_log_path = "/tmp/tool_debug.log"
         with open(tool_log_path, 'a') as f:
             f.write("\n\nStarting tool debug log\n")
@@ -2364,19 +2185,25 @@ You must fix the error before proceeding."""
     
                             # Find matching tool
                             matching_tools = [
-                                tool for tool in self.tools 
-                                if tool.base_tool.name.lower() == tool_name.lower()
+                                tool for tool in self.tools
+                                if (tool.base_tool.name.lower() if hasattr(tool, 'base_tool') else tool.name.lower()) == tool_name.lower()
                             ]
-    
+
                             if matching_tools:
                                 tool = matching_tools[0]
-                                
+
                                 # tool_result = await tool._arun(**tool_args)
                                
                                 # Execute the tool and get its result
                                 # Throttle to prevent CPU spin with fast models (MiniMax)
                                 await asyncio.sleep(0.1)
-                                tool_result = await tool._arun(**tool_args)
+                                if hasattr(tool, 'base_tool'):
+                                    tool_result = await tool._arun(**tool_args)
+                                else:
+                                    from langchain_core.runnables import RunnableConfig
+                                    config = RunnableConfig()
+                                    raw_result = await tool._arun(config=config, **tool_args)
+                                    tool_result = ToolResult(output=str(raw_result))
                                 with open('/tmp/streamlit_debug.log', 'a') as f:
                                     f.write(f"\Tool result: {tool_result}")
                                 # except ToolError as e:
@@ -2809,7 +2636,7 @@ You must fix the error before proceeding."""
                             tool_output_callback(tool_result, tool_id)
                         tool_content = str(tool_result.error) if tool_result.error else str(tool_result.output)
                     else:
-                        # LangChain tool - returns raw content
+                        # LangChain/MCP tool - _arun needs config kwarg
                         from langchain_core.runnables import RunnableConfig
                         config = RunnableConfig()
                         raw_result = await tool._arun(config=config, **tool_args)
@@ -3795,7 +3622,7 @@ class BaseHeavenAgentReplicant(BaseHeavenAgent):
                  duo_enabled: bool = False,
                  run_on_langchain: bool = False,
                  adk: bool = False,
-                 use_uni_api: bool = True
+                 use_uni_api: bool = False
                 ):
         # If no config provided, use the class's default
         _config = config or self.get_default_config()

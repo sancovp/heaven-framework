@@ -75,7 +75,7 @@ class AutoSummarizingAgent(BaseHeavenAgent):
             on_summarization_start: Callback fired when summarization begins
             on_summarization_complete: Callback fired when summarization completes
         """
-        super().__init__(config, unified_chat, history, history_id)
+        super().__init__(config, unified_chat, history=history, history_id=history_id, use_uni_api=getattr(config, 'use_uni_api', False))
         
         # Set default project info if not provided
         self.project_name = project_name or f"{config.name}_Project"
@@ -334,28 +334,28 @@ class AutoSummarizingAgent(BaseHeavenAgent):
             
         return False
     
-    async def run(self, prompt: str, agent_mode: bool = False, iterations: int = 0) -> Dict[str, Any]:
+    async def run(self, prompt: str, **kwargs) -> Dict[str, Any]:
         """
         Override of the run method to include summarization logic.
-        
+
         This method:
         1. Checks if summarization is needed before running
         2. Calls the parent run method
         3. Checks if summarization is needed after running
-        
+
         Args:
             prompt: The user prompt
-            agent_mode: Whether to run in agent mode
-            iterations: Number of iterations for agent mode
-            
+            **kwargs: Additional arguments forwarded to BaseHeavenAgent.run()
+                      (e.g. heaven_main_callback, output_callback, etc.)
+
         Returns:
             The result dict from the parent run method
         """
         # Check for summarization before running
         await self._check_and_summarize_if_needed()
-        
-        # Call parent run method
-        result = await super().run(prompt, agent_mode, iterations)
+
+        # Call parent run method — forward kwargs (heaven_main_callback, etc.)
+        result = await super().run(prompt, **kwargs)
         
         # Check for summarization after running if configured
         if self.summarize_on_complete:

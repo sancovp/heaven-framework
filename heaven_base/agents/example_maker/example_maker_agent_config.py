@@ -31,7 +31,7 @@ class ExampleTool(BaseHeavenTool):
 # import the tool
 # append it to the HeavenAgentConfig.tools
 # Initialize the agent
-# Pass that agent to the hermes step in computer_use_demo.tools.base.tool_utils.hermes_utils
+# Pass that agent to the hermes step in heaven_base.tool_utils.hermes_utils
 # Run it or create a HermesConfig and run it
 # Now you understand tools in HEAVEN SDK!
 ```

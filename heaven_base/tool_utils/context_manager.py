@@ -19,19 +19,8 @@ from langchain_core.runnables import Runnable, RunnableSequence
 from pydantic import BaseModel, Field
 
 # Import your existing classes
-import sys
-sys.path.append('/home/GOD/core')
 from ..memory.history import History
-
-# Import PIS vX1 system
-from computer_use_demo.tools.base.tool_utils.prompt_injection_system_vX1 import (
-    PromptInjectionSystemVX1,
-    PromptInjectionSystemConfigVX1,
-    PromptStepDefinitionVX1,
-    PromptBlockDefinitionVX1,
-    BlockTypeVX1
-)
-from computer_use_demo.tools.base.baseheavenagent import HeavenAgentConfig
+from ..baseheavenagent import HeavenAgentConfig
 
 
 # Pydantic v2 Models for Weave Operations
@@ -524,38 +513,14 @@ class ContextManager:
     async def save_chain_pattern(self, 
                                 pattern: ChainPatternContextEngineeringChainPattern):
         """Save chain pattern to registry system"""
-        from computer_use_demo.tools.utils.omnitool import omnitool
-        
-        # Ensure registry exists
-        try:
-            omnitool('RegistryTool', parameters={
-                'operation': 'create_registry',
-                'registry_name': 'context_engineering_patterns'
-            })
-        except:
-            pass  # Registry may already exist
-        
-        # Save pattern to registry
-        result = omnitool('RegistryTool', parameters={
-            'operation': 'add',
-            'registry_name': 'context_engineering_patterns',
-            'key': pattern.pattern_name,
-            'value': pattern.model_dump(exclude={'execution_state', 'result_vars'})
-        })
-        
-        return result
+        # TODO: omnitool removed (was legacy dependency). Use registry system directly.
+        raise NotImplementedError("save_chain_pattern: omnitool dependency removed. Use heaven_base registry directly.")
     
     async def load_chain_pattern(self, pattern_name: str) -> ChainPatternContextEngineeringChainPattern:
         """Load chain pattern from registry system"""
-        from computer_use_demo.tools.utils.omnitool import omnitool
-        
+        # TODO: omnitool removed (was legacy dependency). Use registry system directly.
         try:
-            # Try to load from registry
-            result = omnitool('RegistryTool', parameters={
-                'operation': 'get',
-                'registry_name': 'context_engineering_patterns',
-                'key': pattern_name
-            })
+            raise NotImplementedError("load_chain_pattern: omnitool dependency removed. Use heaven_base registry directly.")
             
             if result and hasattr(result, 'output'):
                 pattern_data = json.loads(result.output)
@@ -841,8 +806,8 @@ class ContextManager:
                                    template_vars: Dict[str, Any],
                                    base_history_id: Optional[str] = None) -> Dict[str, Any]:
         """Execute chain pattern with comprehensive operation support"""
-        from computer_use_demo.tools.utils.omnitool import omnitool
-        
+        # TODO: omnitool removed (was legacy dependency). Use registry system directly.
+
         # Load pattern
         pattern = await self.load_chain_pattern(pattern_name)
         

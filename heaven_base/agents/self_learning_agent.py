@@ -26,7 +26,7 @@ class SelfLearningAgent(BaseHeavenAgent):
     - Learns and improves from experience
     """
     
-    def __init__(self, config, unified_chat, max_tool_calls: int = 10, orchestrator: bool = False, history = None, history_id = None, system_prompt_suffix: str = None, adk: bool = False, duo_enabled: bool = False, run_on_langchain: bool = False, use_uni_api: bool = True):
+    def __init__(self, config, unified_chat, max_tool_calls: int = 10, orchestrator: bool = False, history = None, history_id = None, system_prompt_suffix: str = None, adk: bool = False, duo_enabled: bool = False, run_on_langchain: bool = False, use_uni_api: bool = False):
         # Normalize agent name for registry naming
         self.agent_id = normalize_agent_name(config.name)
         self.main_registry_name = f"self_learning_{self.agent_id}"

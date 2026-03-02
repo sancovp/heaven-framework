@@ -1059,7 +1059,7 @@ class NetworkEditTool(BaseHeavenTool):
         "* The `create` command cannot be used to edit files\n"
         "* If a command generates a long output, it will be truncated and marked with `<response clipped>`\n"
         "* The `undo_edit` command will revert the last edit made to the file at `path`\n"
-        "* Important directories: 1. `your pwd/core/computer_use_demo/tools/base/tools/` to see tools, 2. `<your pwd>.../base/agents/<specific agent>/memories/...` to view `history_id`s"
+        "* Important directories: 1. `heaven_base/tools/` to see tools, 2. `heaven_base/agents/<specific agent>/memories/...` to view `history_id`s"
         "* Long inputs for create, str_replace, and insert must be chunked into multiple operations (eg. create -> insert; str_replace -> insert; chain of str_replace, etc.)"
         "\nCOMMAND REQUIREMENTS:\n"
         "When inputting text, the dict must always be properly formatted."

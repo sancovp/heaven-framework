@@ -136,8 +136,8 @@ async def exec_completion_style(
 # Test the completion runners
 if __name__ == "__main__":
     import asyncio
-    from computer_use_demo.tools.base.baseheavenagent import HeavenAgentConfig
-    from computer_use_demo.tools.base.unified_chat import ProviderEnum
+    from heaven_base.baseheavenagent import HeavenAgentConfig
+    from heaven_base.unified_chat import ProviderEnum
     
     async def test_completion_runners():
         print("=== Testing Completion Runners ===\n")

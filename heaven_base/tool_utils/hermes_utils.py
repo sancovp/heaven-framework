@@ -1,28 +1,4 @@
-# # hermes_utils.py
-
-# # run_test_wrapper.py
-# import asyncio
-# import os
-# import sys
-
-# # --- Add the project base path to sys.path if needed ---
-# # Adjust this path based on where you run the script from,
-# # so it can find the 'computer_use_demo' package.
-# project_base_path = "/home/GOD/core" # Example: Adjust to your project's root
-# if project_base_path not in sys.path:
-#     sys.path.insert(0, project_base_path)
-
-# # --- Import the target function ---
-# try:
-#     # Adjust the import path based on your file structure
-#     from computer_use_demo.tools.base.tools.hermes_test_tool import _test_hermes_call_wrapper
-#     print("Successfully imported _test_hermes_call_wrapper.")
-# except ImportError as e:
-#     print(f"Failed to import test wrapper function: {e}")
-#     print("Check the file path and ensure the test tool file exists.")
-#     sys.exit(1)
-# except Exception as e:
-#     print(f"An unexpected error occurred during import: {e}")
+# hermes_utils.py
 #     sys.exit(1)
 
 # # --- Main execution function ---
@@ -81,7 +57,7 @@ from ..unified_chat import UnifiedChat
 from ..configs.hermes_config import HermesConfig
 from ..utils.get_env_value import EnvConfigUtil
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, ToolMessage, BaseMessage
-# from computer_use_demo.tools.base.tools import *  
+# from heaven_base.tools import *  
 from ..agents import *
 
 
@@ -182,9 +158,9 @@ async def exec_agent_run_locally_without_docker(
                 # Create agent with history_id if provided
                 extra_kwargs = agent_constructor_kwargs or {}
                 if command_data['history_id']:
-                    agent = BaseHeavenAgent(config, UnifiedChat(), history_id=command_data['history_id'], orchestrator=command_data.get('orchestration_preprocess', False), **extra_kwargs)
+                    agent = BaseHeavenAgent(config, UnifiedChat(), history_id=command_data['history_id'], orchestrator=command_data.get('orchestration_preprocess', False), use_uni_api=config.use_uni_api, **extra_kwargs)
                 else:
-                    agent = BaseHeavenAgent(config, UnifiedChat(), orchestrator=command_data.get('orchestration_preprocess', False), **extra_kwargs)
+                    agent = BaseHeavenAgent(config, UnifiedChat(), orchestrator=command_data.get('orchestration_preprocess', False), use_uni_api=config.use_uni_api, **extra_kwargs)
 
             elif inspect.isclass(command_data['agent']) and issubclass(command_data['agent'], BaseHeavenAgentReplicant):
                 # Replicant class - instantiate with hermes args
@@ -359,7 +335,7 @@ async def exec_agent_run_locally_without_docker(
             }
     
             if command_data['return_summary']:
-                from computer_use_demo.tools.base.agents.summary_agent.summary_util import call_summary_agent
+                from heaven_base.agents.summary_agent.summary_util import call_summary_agent
                 summary_result = await call_summary_agent(result["history_id"])
                 response_data["summary"] = summary_result
     
@@ -433,10 +409,10 @@ import json
 import importlib
 from pathlib import Path
 from typing import Type, Union
-from computer_use_demo.tools.base.baseheavenagent import BaseHeavenAgent, BaseHeavenAgentReplicant, HeavenAgentConfig
-from computer_use_demo.tools.base.unified_chat import UnifiedChat, ProviderEnum
-from computer_use_demo.tools.base.baseheaventool import BaseHeavenTool, ToolArgsSchema, ToolResult
-# from computer_use_demo.tools.base.tools import *  
+from heaven_base.baseheavenagent import BaseHeavenAgent, BaseHeavenAgentReplicant, HeavenAgentConfig
+from heaven_base.unified_chat import UnifiedChat, ProviderEnum
+from heaven_base.baseheaventool import BaseHeavenTool, ToolArgsSchema, ToolResult
+# from heaven_base.tools import *  
 from ..agents import *
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage, HumanMessage, BaseMessage
 
@@ -494,7 +470,7 @@ async def send_message():
             
             try:
                 # Basic module path
-                module_path = f"computer_use_demo.tools.base.agents.{{agent_name.lower()}}.{{agent_name.lower()}}"
+                module_path = f"heaven_base.agents.{{agent_name.lower()}}.{{agent_name.lower()}}"
                 # print(f"Importing from: {{module_path}}")
                 
                 agent_module = importlib.import_module(module_path)
@@ -532,7 +508,7 @@ async def send_message():
             if not replicant_success:
                 try:
                     config_name = f"{{agent_name.lower()}}_config"
-                    config_path = f"computer_use_demo.tools.base.agents.{{agent_name.lower()}}.{{config_name}}"
+                    config_path = f"heaven_base.agents.{{agent_name.lower()}}.{{config_name}}"
                     # print(f"Looking for config at: {{config_path}}")
                     
                     config_module = importlib.import_module(config_path)
@@ -585,7 +561,7 @@ async def send_message():
         }}
 
         if command_data['return_summary']:
-            from computer_use_demo.tools.base.agents.summary_agent.summary_util import call_summary_agent
+            from heaven_base.agents.summary_agent.summary_util import call_summary_agent
             summary_result = await call_summary_agent(result["history_id"])
             response_data["summary"] = summary_result
 

@@ -146,7 +146,7 @@ class DovetailModel(BaseModel):
 
 #     def run(self):
 
-#         from computer_use_demo.tools.base.tool_utils.hermes_utils import hermes_step
+#         from heaven_base.tool_utils.hermes_utils import hermes_step
 
 
 #         for i in range(self.max_steps):
@@ -195,7 +195,7 @@ class DovetailModel(BaseModel):
 
 #     def run(self):
 
-#         from computer_use_demo.tools.base.tool_utils.hermes_utils import hermes_step
+#         from heaven_base.tool_utils.hermes_utils import hermes_step
 
 
 #         config = self.cfg.base_config

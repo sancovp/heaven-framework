@@ -79,7 +79,7 @@ OmniTool is the universal tool executor that can:
 ### OmniTool Usage
 
 ```python
-from computer_use_demo.tools.base.utils.omnitool import omnitool
+from heaven_base.utils.omnitool import omnitool  # TODO: verify omnitool location
 
 # List all available tools
 result = omnitool(list_tools=True)
@@ -214,7 +214,7 @@ result = my_function(args)  # YES!
 config = HeavenAgentConfig(tools=[MyTool])
 
 # EXCEPTION - OmniTool is allowed
-from computer_use_demo.tools.base.utils.omnitool import omnitool
+from heaven_base.utils.omnitool import omnitool  # TODO: verify omnitool location
 result = omnitool('MyTool', parameters=args)  # OK! OmniTool is special
 ```
 
