@@ -20,7 +20,7 @@ import importlib
 from collections.abc import Mapping, Iterable
 
 
-tool_log_path = "/tmp/tool_debug.log"
+# tool_log_path = "/tmp/tool_debug.log"  # DEBUG - disabled
 
 def schema_to_pydantic_model(model_name: str, schema: dict) -> type:
     """
