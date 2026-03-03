@@ -39,7 +39,7 @@ ADK_DEBUG_PATH = "/tmp/adk_streamlit_debug.txt"
 
 def _log_run_adk(stage: str, messages):
     """Append a timestamped dump of messages to the debug file."""
-    with open(ADK_DEBUG_PATH, "a") as f:
+    # with open(ADK_DEBUG_PATH, "a") as f:
         f.write(f"\n---- run_adk: {stage} @ {datetime.now().isoformat()} ----\n")
         for msg in messages:
             f.write(f"  {repr(msg)}\n")
@@ -958,7 +958,7 @@ You must fix the error before proceeding."""
             self.history = History.load_from_id(history_id)
             self.original_history_id = history_id
             self.original_json_md_path = self.history.json_md_path
-            print(f"DEBUG: In BaseHeavenAgent init, json_md_path={self.history.json_md_path} and original_json_md_path={self.original_json_md_path}")
+            # DEBUG: In BaseHeavenAgent init, json_md_path={...}
             # Load status
             if hasattr(self.history, 'agent_status') and self.history.agent_status:
                 self.status = self.history.agent_status
@@ -1930,10 +1930,10 @@ You must fix the error before proceeding."""
         await self.resolve_mcps()
 
         tool_log_path = "/tmp/tool_debug.log"
-        with open(tool_log_path, 'a') as f:
+        # with open(tool_log_path, 'a') as f:
             f.write("\n\nStarting tool debug log\n")
 
-        with open('/tmp/streamlit_debug.log', 'a') as f:
+        # with open('/_tmp_streamlit_debug.log', 'a') as f:
             f.write("\n\nStarting streamlit_run")
             f.write(f"\nHistory length: {len(self.history.messages)}")
             f.write(f"\nHistory messages: {self.history.messages}")
@@ -1966,7 +1966,7 @@ You must fix the error before proceeding."""
             elif conversation_history[0].content != self.config.system_prompt:
                 # Condition 2: The first element is a SystemMessage, but it doesn't have the current system prompt.
                 conversation_history[0] = SystemMessage(content=self.config.system_prompt)
-            with open('/tmp/streamlit_debug.log', 'a') as f:
+            # with open('/_tmp_streamlit_debug.log', 'a') as f:
                 f.write("\n=== Conversation History After System Check ===")
                 for i, msg in enumerate(conversation_history):
                     f.write(f"\nMessage {i}: {type(msg).__name__} - {msg.content[:100]}...")
@@ -2057,7 +2057,7 @@ You must fix the error before proceeding."""
                 # logger.error("==== Conversation_History %s", conversation_history)
                 response = await self.chat_model.ainvoke(conversation_history)
                 ###### Add output callback here
-                with open('/tmp/streamlit_debug.log', 'a') as f:
+                # with open('/_tmp_streamlit_debug.log', 'a') as f:
                     f.write(f"\nLangchain response: {response}")
                 print(f"FULL RESPONSE CONTENT: {response.content}")
                 print(f"RESPONSE TYPE: {type(response.content)}")
@@ -2204,12 +2204,12 @@ You must fix the error before proceeding."""
                                     config = RunnableConfig()
                                     raw_result = await tool._arun(config=config, **tool_args)
                                     tool_result = ToolResult(output=str(raw_result))
-                                with open('/tmp/streamlit_debug.log', 'a') as f:
+                                # with open('/_tmp_streamlit_debug.log', 'a') as f:
                                     f.write(f"\Tool result: {tool_result}")
                                 # except ToolError as e:
                                 #     # The error is already formatted with tool name in _arun
                                 #     tool_result = ToolResult(error=str(e))
-                                #     with open(tool_log_path, 'a') as f:
+                                #     # with open(tool_log_path, 'a') as f:
                                 #         f.write(f"\nTool error: {e}\n")
                                 
     
@@ -2332,14 +2332,14 @@ You must fix the error before proceeding."""
                                     #     if len(str(item.content)) > 100000:
                                     #         item.content="Removed old image that is no longer needed"
                                 ### Unindented these 2 tabs
-                                with open(tool_log_path, 'a') as f:
+                                # with open(tool_log_path, 'a') as f:
                                     f.write(f"\nAbout to call tool_output_callback with result: {tool_result.output}\n")
                                     f.write(f"tool_id: {tool_id}\n")
                                 
                                 tool_output_callback(tool_result, tool_id)
                                 if heaven_main_callback:
                                     heaven_main_callback(conversation_history[-1]) # the tool message
-                                with open(tool_log_path, 'a') as f:
+                                # with open(tool_log_path, 'a') as f:
                                     f.write("After tool_callback\n")
                                    
     
@@ -2349,7 +2349,7 @@ You must fix the error before proceeding."""
     
                                 # Get AI's response about the tool result
                                 # print("\n=== GETTING AI RESPONSE ABOUT TOOL RESULT ===")
-                                with open(tool_log_path, 'a') as f:
+                                # with open(tool_log_path, 'a') as f:
                                     f.write(f"\nAI should be called next...\n")
                                     f.write(f"Coversation_History:\n    {conversation_history}\n")
                                 result_response = await self.chat_model.ainvoke(conversation_history)
@@ -2359,7 +2359,7 @@ You must fix the error before proceeding."""
                                 if heaven_main_callback:
                                         heaven_main_callback(result_response)
                                 if result_response:
-                                    with open(tool_log_path, 'a') as f:
+                                    # with open(tool_log_path, 'a') as f:
                                         f.write(f"\nGot AI response after tool: {result_response.content}\n")
                                 # print(f"===Result response===:\n\n{result_response}\n\n===/result response===")
                                 ###### Add output callback here
@@ -2604,14 +2604,14 @@ You must fix the error before proceeding."""
         for tool_call in tool_calls:
             try:
                 # DEBUG: Print the exact tool_call object
-                print(f"🔧 DEBUG: Processing tool_call: {json.dumps(tool_call, indent=2)}")
+                # DEBUG: print( Processing tool_call: {json.dumps(tool_call, indent=2)}")
                 
                 # Extract tool info from OpenAI format
                 tool_id = tool_call["id"]
                 tool_name = tool_call["function"]["name"]
                 tool_args = json.loads(tool_call["function"]["arguments"])
                 
-                print(f"🔧 DEBUG: Extracted tool_id='{tool_id}', tool_name='{tool_name}'")
+                # DEBUG: print( Extracted tool_id='{tool_id}', tool_name='{tool_name}'")
                 
                 # Find matching tool (HEAVEN or LangChain)
                 matching_tools = []
@@ -2697,10 +2697,10 @@ You must fix the error before proceeding."""
         """Remove dangling tool_calls from the last message in uni_conversation_history only."""
         if uni_conversation_history and uni_conversation_history[-1].get("tool_calls"):
             if "MULTIPLE_TOOL_CALLS" in reason and len(uni_conversation_history[-1]["tool_calls"]) > 1:
-                print(f"🔧 CLEANSING {reason}: Keeping only first of {len(uni_conversation_history[-1]['tool_calls'])} tool_calls")
+                # DEBUG: print( {reason}: Keeping only first of {len(uni_conversation_history[-1]['tool_calls'])} tool_calls")
                 uni_conversation_history[-1]["tool_calls"] = [uni_conversation_history[-1]["tool_calls"][0]]
             elif reason == "MAX_TOOL_CALLS":
-                print(f"🔧 CLEANSING {reason}: Removing {len(uni_conversation_history[-1]['tool_calls'])} dangling tool_calls")
+                # DEBUG: print( {reason}: Removing {len(uni_conversation_history[-1]['tool_calls'])} dangling tool_calls")
                 uni_conversation_history[-1] = {
                     "role": "assistant", 
                     "content": uni_conversation_history[-1].get("content", "")
@@ -2845,7 +2845,7 @@ You must fix the error before proceeding."""
                     
     #                 # CLEANSE MULTIPLE TOOL_CALLS: Only process the FIRST tool call at a time
     #                 if len(assistant_message["tool_calls"]) > 1:
-    #                     print(f"🔧 CLEANSING MULTIPLE TOOL_CALLS: Keeping only first of {len(assistant_message['tool_calls'])} tool_calls")
+    #                     # DEBUG: print( MULTIPLE TOOL_CALLS: Keeping only first of {len(assistant_message['tool_calls'])} tool_calls")
     #                     assistant_message["tool_calls"] = [assistant_message["tool_calls"][0]]
                     
     #                 # Store original for potential cleansing
@@ -2872,8 +2872,8 @@ You must fix the error before proceeding."""
                     
     #                 while assistant_message.get("tool_calls") and tool_call_count < self.max_tool_calls:
     #                     # DEBUG: Print the exact assistant_message with tool_calls
-    #                     print(f"🔧 DEBUG: PROCESSING ASSISTANT MESSAGE: {json.dumps(assistant_message, indent=2)}")
-    #                     print(f"🔧 DEBUG: TOOL_CALLS ARRAY: {json.dumps(assistant_message['tool_calls'], indent=2)}")
+    #                     # DEBUG: print( PROCESSING ASSISTANT MESSAGE: {json.dumps(assistant_message, indent=2)}")
+    #                     # DEBUG: print( TOOL_CALLS ARRAY: {json.dumps(assistant_message['tool_calls'], indent=2)}")
                         
     #                     # Execute tools and get tool messages
     #                     tool_messages = await self._execute_tool_calls_uni(assistant_message["tool_calls"], tool_output_callback)
@@ -2921,7 +2921,7 @@ You must fix the error before proceeding."""
     #                             tool_name = tc["function"]["name"]
     #                             tool_args = tc["function"]["arguments"]
     #                             cancelled_tools.append(f"{tool_name}({tool_args})")
-    #                         print(f"🔧 CLEANSING MAX_TOOL_CALLS: Removing {len(assistant_message['tool_calls'])} dangling tool_calls from assistant_message")
+    #                         # DEBUG: print( MAX_TOOL_CALLS: Removing {len(assistant_message['tool_calls'])} dangling tool_calls from assistant_message")
     #                         assistant_message = {
     #                             "role": "assistant", 
     #                             "content": assistant_message.get("content", "")
@@ -3525,7 +3525,7 @@ You must fix the error before proceeding."""
         # Check if the block report file was created
         if os.path.exists(block_report_path):            
             # Read and display the file contents
-            with open(block_report_path, 'r') as f:
+            # with open(block_report_path, 'r') as f:
                 report_data = json.load(f)
                 print("Block Report Content:")
                 for key, value in report_data.items():
