@@ -1,3 +1,20 @@
+"""Unified Chat Interface - Multi-Provider LLM Support.
+
+This module provides:
+- ProviderEnum: Supported LLM providers
+- UnifiedChat: Unified interface to multiple LLM backends
+- get_uni_api_url(): Auto-discovery of uni-api endpoint
+
+Supported Providers:
+- Anthropic (Claude)
+- OpenAI (GPT-4)
+- Google (Gemini)
+- Groq
+- DeepSeek
+
+Also supports uni-api for custom endpoints.
+"""
+
 import json
 import os
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
@@ -54,6 +71,8 @@ def get_uni_api_url():
 
 # Define the Provider Enum 
 class ProviderEnum(Enum):
+    """Supported LLM providers for UnifiedChat."""
+    
     ANTHROPIC = 'anthropic'
     OPENAI = 'openai'
     GOOGLE = 'google'
@@ -70,6 +89,15 @@ class ProviderEnum(Enum):
 # }
 
 class UnifiedChat:
+    """Unified chat interface supporting multiple LLM providers.
+    
+    Supports: Anthropic, OpenAI, Google, Groq, DeepSeek
+    Also supports uni-api for custom endpoints.
+    
+    Usage:
+        chat = UnifiedChat(provider=ProviderEnum.ANTHROPIC, model="claude-3-5-sonnet-20241022")
+        response = chat.invoke([SystemMessage(content="Hello")])
+    """
     PROVIDERS = {
         ProviderEnum.ANTHROPIC: ChatAnthropic,
         ProviderEnum.OPENAI: ChatOpenAI,

@@ -2,7 +2,19 @@
 
 
 
-"""Base implementation of the GOD Framework Agent."""
+"""Heaven Framework - Base Agent Implementation.
+
+This module provides:
+- BaseHeavenAgent: Abstract base class for all Heaven agents
+- HeavenAgentConfig: Configuration for agents
+- Hook system for agent extensibility
+
+The framework supports:
+- Multiple LLM providers (Anthropic, OpenAI, Google, Groq, DeepSeek)
+- Tool management and execution
+- History/memory management
+- Uni-api for custom endpoints
+"""
 from copy import deepcopy
 import re
 import json
@@ -1523,8 +1535,20 @@ You must fix the error before proceeding."""
 
   
     async def run(self, prompt: Optional[str] = None, notifications: Optional[bool] = False, streamlit: Optional[bool] = False, output_callback: Optional[Callable] = None, tool_output_callback: Optional[Callable] = None, heaven_main_callback: Optional[Callable] = None, use_uni_api: Optional[bool] = False):
-
-                       
+        """Run the agent with a prompt.
+        
+        Args:
+            prompt: The user prompt to send to the agent
+            notifications: Whether to send notifications
+            streamlit: Whether to use streamlit mode
+            output_callback: Callback for output
+            tool_output_callback: Callback for tool output
+            heaven_main_callback: Callback for main agent events
+            use_uni_api: Whether to use uni-api instead of LangChain
+            
+        Returns:
+            The agent's response
+        """
         if use_uni_api:
             self.use_uni_api = True
         if self.use_uni_api:

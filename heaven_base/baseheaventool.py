@@ -1,4 +1,18 @@
 # A metaprogramming wrapper for Langchain BaseTool and Tool construction
+"""Heaven Framework - Tool Base Classes.
+
+This module provides:
+- BaseHeavenTool: Abstract base for all Heaven tools
+- ToolArgsSchema: Base class for tool argument schemas
+- ToolResult, ToolError, CLIResult: Standardized result types
+
+Tools in Heaven Framework wrap LangChain tools and provide:
+- Standardized result handling
+- Error handling
+- CLI support
+- Schema validation
+"""
+
 from copy import deepcopy
 from dataclasses import dataclass, fields, replace
 from typing import Any, Dict, Optional, Type, Callable, ClassVar, Literal, List, Union
@@ -619,7 +633,18 @@ class ToolArgsSchema(BaseModel):
 
   
 class BaseHeavenTool(ABC):
-    """Provider-agnostic tool base class with standardized results"""
+    """Provider-agnostic tool base class with standardized results.
+    
+    All tools must define these class attributes:
+    - name: str - tool identifier
+    - description: str - what the tool does
+    - func: Callable - the function to execute
+    - args_schema: Type[ToolArgsSchema] - Pydantic schema for arguments
+    - base_tool: BaseTool - wrapped LangChain tool
+    - is_async: bool - whether tool is async
+    
+    Provides standardized ToolResult, ToolError, CLIResult types.
+    """
     # Required class attributes that tools must define
     name: str
     description: str
