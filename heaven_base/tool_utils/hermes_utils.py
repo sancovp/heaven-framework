@@ -158,9 +158,9 @@ async def exec_agent_run_locally_without_docker(
                 # Create agent with history_id if provided
                 extra_kwargs = agent_constructor_kwargs or {}
                 if command_data['history_id']:
-                    agent = BaseHeavenAgent(config, UnifiedChat(), history_id=command_data['history_id'], orchestrator=command_data.get('orchestration_preprocess', False), use_uni_api=config.use_uni_api, **extra_kwargs)
+                    agent = BaseHeavenAgent(config, UnifiedChat(), history_id=command_data['history_id'], orchestrator=command_data.get('orchestration_preprocess', False), **extra_kwargs)
                 else:
-                    agent = BaseHeavenAgent(config, UnifiedChat(), orchestrator=command_data.get('orchestration_preprocess', False), use_uni_api=config.use_uni_api, **extra_kwargs)
+                    agent = BaseHeavenAgent(config, UnifiedChat(), orchestrator=command_data.get('orchestration_preprocess', False), **extra_kwargs)
 
             elif inspect.isclass(command_data['agent']) and issubclass(command_data['agent'], BaseHeavenAgentReplicant):
                 # Replicant class - instantiate with hermes args
@@ -343,8 +343,8 @@ async def exec_agent_run_locally_without_docker(
             return response_data
         
         except Exception as e:
-            print(f"DEBUG: Exception in local execution: {str(e)}")
-            print(f"DEBUG: Full traceback: {traceback.format_exc()}")
+            print("DEBUG: Exception in local execution: {str(e)}")
+            print("DEBUG: Full traceback: {traceback.format_exc()}")
             return {
                 "error": str(e),
                 "traceback": traceback.format_exc()

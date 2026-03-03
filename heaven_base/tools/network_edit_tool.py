@@ -18,7 +18,7 @@ from ..baseheaventool import BaseHeavenTool, ToolResult, CLIResult, ToolError, T
 from .run import maybe_truncate, run
 
 
-tool_log_path = "/tmp/tool_debug.log"
+# tool_log_path = "/tmp/tool_debug.log"  # DEBUG - disabled
 
 Command = Literal[
     "view",
@@ -126,7 +126,7 @@ class EditHelper:
     _file_history: dict[Path, list[str]]
 
     def __init__(self):
-        with open(tool_log_path, 'a') as f:
+        # with open(tool_log_path, 'a') as f:
             f.write("\n\nEditHelper init called!\n")
         self._file_history = defaultdict(list)
         
@@ -177,13 +177,13 @@ class EditHelper:
         # Validate the structure is now correct
         if not isinstance(command_arguments[command], dict):
             raise ToolError(f"Arguments for '{command}' must be a dictionary, got {type(command_arguments[command])}")
-        with open(tool_log_path, 'a') as f:
+        # with open(tool_log_path, 'a') as f:
             f.write("\n\nuse_edit_helper entered!\n")
         _path = Path(path)
-        with open(tool_log_path, 'a') as f:
+        # with open(tool_log_path, 'a') as f:
             f.write("\n\nuse_edit_helper: path set!\n")
         self.validate_path(command, _path, target_container)
-        with open(tool_log_path, 'a') as f:
+        # with open(tool_log_path, 'a') as f:
             f.write("\n\nuse_edit_helper: path validated!\n")
         
 
@@ -308,12 +308,12 @@ Chunking Instructions:
                 )
             raise
         if command == "view":
-            with open(tool_log_path, 'a') as f:
+            # with open(tool_log_path, 'a') as f:
                 f.write("\n\nuse_edit_helper: entering command 'view'!\n")
             return await self.view(_path, view_range, target_container)
 
         elif command == "create":
-            with open(tool_log_path, 'a') as f:
+            # with open(tool_log_path, 'a') as f:
                 f.write("\n\nuse_edit_helper: entering command 'create'!\n")
             if file_text is None:
                 raise ToolError("ERROR: Parameter `file_text` is required for command: create")
@@ -350,7 +350,7 @@ Chunking Instructions:
         Check that the path/command combination is valid.
         """
         # Check if its an absolute path
-        with open(tool_log_path, 'a') as f:
+        # with open(tool_log_path, 'a') as f:
                 f.write("\n\nuse_edit_helper_validate_path: entered!\n")
         if not path.is_absolute():
             suggested_path = Path("") / path
@@ -1027,10 +1027,10 @@ async def use_edit_tool_in_heaven(
     **kwargs,
 ) -> ToolResult:
     """Wrapper function for the edit tool to be used with BaseHeavenTool"""
-    with open(tool_log_path, 'a') as f:
+    # with open(tool_log_path, 'a') as f:
         f.write("\n\nEntering use_edit_tool_in_heaven\n")
     edit_func = EditHelper() # need to fix THIS
-    with open(tool_log_path, 'a') as f:
+    # with open(tool_log_path, 'a') as f:
         f.write("\n\nEditHelper() init called!!\n")
     return await edit_func.use_edit_helper(
         

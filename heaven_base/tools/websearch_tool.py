@@ -6,7 +6,7 @@ from ..utils.get_env_value import EnvConfigUtil, KnownEnvVar
 from langchain.chat_models import init_chat_model
 from langchain_openai import ChatOpenAI
 
-tool_log_path = "/tmp/tool_debug.log"
+# tool_log_path = "/tmp/tool_debug.log"  # DEBUG - disabled
 
 async def _perform_websearch(
     search_goal: str,
