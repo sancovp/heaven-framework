@@ -42,8 +42,8 @@ Output format:
 PHASE_SUMMARY:
 [Rich detailed summary telling the complete story]""",
             tools=[],
-            provider=ProviderEnum.OPENAI,
-            model="gpt-5-nano",
+            provider=ProviderEnum.ANTHROPIC,
+            model="MiniMax-M2.5-highspeed",
             temperature=0.3
         )
 

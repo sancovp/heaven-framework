@@ -28,7 +28,7 @@ class SummaryAgent(BaseHeavenAgentReplicant):
             system_prompt="You are a specialized agent that creates clear, straightforward summaries. You analyze conversations and create: overall summary, list of completed tasks, and key observations with a list of obstacles encountered by the agent (if any; a task counts as an obstacle (obstacle: have to do X) and a problem during the task is also an obstacle (obstacle: have to do X, while doing X encountered another obstacle Y...)) and the attempted overcomes (if any) and result.",
             tools=[StraightforwardSummarizerTool],
             provider=ProviderEnum.ANTHROPIC,
-            model="claude-3-5-haiku-latest",
+            model="MiniMax-M2.5-highspeed",
             temperature=0.2
         )
 

@@ -52,9 +52,10 @@ ADK_DEBUG_PATH = "/tmp/adk_streamlit_debug.txt"
 def _log_run_adk(stage: str, messages):
     """Append a timestamped dump of messages to the debug file."""
     # with open(ADK_DEBUG_PATH, "a") as f:
-        f.write(f"\n---- run_adk: {stage} @ {datetime.now().isoformat()} ----\n")
-        for msg in messages:
-            f.write(f"  {repr(msg)}\n")
+    #     f.write(f"\n---- run_adk: {stage} @ {datetime.now().isoformat()} ----\n")
+    #     for msg in messages:
+    #         f.write(f"  {repr(msg)}\n")
+    pass
 
 # Only gets ToolResult
 # Four simple regexes, non-greedy, DOTALL
@@ -259,7 +260,7 @@ def generate_dereferenced_schema(schema: Union[dict, Type[BaseModel]]) -> dict:
 class DuoSystemConfig(BaseModel):
     """Config for DUO Prompt Injector"""
     provider: ProviderEnum = ProviderEnum.OPENAI
-    model: Optional[str] = "gpt-4.1-nano"
+    model: Optional[str] = "MiniMax-M2.5-highspeed"
     temperature: float = Field(default=0.7)
     thinking_budget: int | None = None
     system_prompt: str = r"""
@@ -339,7 +340,7 @@ class HeavenAgentConfig(BaseModel):
     temperature: float = Field(default=0.7)
     max_tokens: int = 8000
     thinking_budget: int | None = None
-    model: Optional[str] = None
+    model: Optional[str] = "MiniMax-M2.5-highspeed"
     checkpointer: Optional[Any] = None  # Temporarily changed from BaseCheckpointer
     additional_kws: List[str] = Field(default_factory=list)
     additional_kw_instructions: str = Field(default="")
@@ -359,6 +360,9 @@ class HeavenAgentConfig(BaseModel):
     persona: Optional[str] = None  # Persona name — resolves frame, skillset, mcp_set, carton_identity
     mcp_set: Optional[str] = None  # Strata MCP set name (resolved from persona or set directly)
     carton_identity: Optional[str] = None  # CartON identity for observations
+    state_machine: Optional[Any] = None  # KeywordBasedStateMachine instance
+    min_sm_cycles: Optional[int] = None  # Minimum complete SM cycles before agent can stop
+    enable_compaction: bool = False  # Enable auto-compaction when transcript exceeds threshold
 
     def _get_base_prompt(self):
         """Get the current system prompt, using evolved version if available"""
@@ -677,13 +681,12 @@ class HeavenAgentConfig(BaseModel):
     
         
     
-        # Combine base prompt with suffixes
+        # Combine base prompt with suffixes (skip any already present in base)
     
         if suffix_texts:
-    
-            return f"{base_prompt}\n\n{''.join(suffix_texts)}"
-    
-        
+            new_suffixes = [s for s in suffix_texts if s not in base_prompt]
+            if new_suffixes:
+                return f"{base_prompt}\n\n{''.join(new_suffixes)}"
     
         return base_prompt
 
@@ -860,6 +863,21 @@ class BaseHeavenAgent(ABC):
                 self.tools.append(tool.create(adk))
             else:
                 print(f"Unknown tool type: {tool}, skipping")  
+
+        # --- State Machine Tool Integration ---
+        self.state_machine = config.state_machine
+        self.min_sm_cycles = config.min_sm_cycles
+        if self.state_machine is not None:
+            # Load persisted state (file-based, crash-resilient)
+            self.state_machine.load_state(self.name)
+            # Create tool with SM captured in closure
+            from .tools.state_machine_tool import create_sm_tool
+            sm_tool = create_sm_tool(self.state_machine, self.name)
+            self.tools.append(sm_tool)
+            # Inject SM context into system prompt
+            sm_prompt = self.state_machine.build_transition_prompt()
+            config.system_prompt = config.system_prompt + "\n\n" + sm_prompt
+
         # Filter and prepare provider-specific parameters
 
         model_params = {
@@ -928,6 +946,11 @@ class BaseHeavenAgent(ABC):
             # else:
             #     self.chat_model = self.chat_model.bind_tools(self.to_base_tools())
                         
+        # Compaction state
+        self._compaction_enabled = config.enable_compaction
+        self._compact_threshold = 800_000  # ~350k tokens ≈ 800k chars
+        self._compacting = False
+
         # Agentic state
         
         self.goal: Optional[str] = None
@@ -983,7 +1006,7 @@ You must fix the error before proceeding."""
         else:
             # Import here to avoid circular imports
             from .utils.context_window_config import ContextWindowConfig
-            self.context_window_config = ContextWindowConfig(self.config.model or "gpt-4o-mini")
+            self.context_window_config = ContextWindowConfig(self.config.model or "MiniMax-M2.5-highspeed")
 
         self.config.system_prompt = self.system_prompt_evolved if self.system_prompt_evolved is not None else self.config.system_prompt
         if system_prompt_suffix is not None:
@@ -1243,7 +1266,213 @@ You must fix the error before proceeding."""
                isinstance(messages[-2], HumanMessage)):
             # Remove the older message
             messages.pop(-2)  # Keep the newest HumanMessage
-          
+
+    # ------------------------------------------------------------------
+    # Compaction: context-window management
+    # ------------------------------------------------------------------
+
+    def _build_compaction_agent(self):
+        """Create a no-tools compaction agent on the SAME history.
+
+        Derives config from self.config — same model, provider, extra kwargs.
+        Strips all tools and swaps the system prompt for compaction mode.
+        Returns a new BaseHeavenAgent instance sharing self.history_id.
+        """
+        from .compaction import COMPACTION_SYSTEM_PROMPT
+
+        compaction_config = HeavenAgentConfig(
+            name=f"{self.config.name}-compaction",
+            system_prompt=COMPACTION_SYSTEM_PROMPT,
+            tools=[],
+            model=self.config.model,
+            provider=self.config.provider if hasattr(self.config, 'provider') else None,
+            use_uni_api=getattr(self.config, 'use_uni_api', False),
+            max_tokens=self.config.max_tokens,
+            extra_model_kwargs=getattr(self.config, 'extra_model_kwargs', None),
+        )
+
+        return BaseHeavenAgent(
+            config=compaction_config,
+            unified_chat=UnifiedChat(),
+            history_id=getattr(self, 'original_history_id', None) or (
+                self.history.save(self.name) if self.history else None
+            ),
+        )
+
+    async def _run_with_context_guard(self, prompt, as_task=False,
+                                       task_ref_setter=None, **run_kwargs):
+        """Run self with context-window overflow protection.
+
+        Catches 'context window exceeds limit' errors, pops oldest iterations
+        from history (~30k chars per attempt), and retries.
+        """
+        import asyncio
+
+        max_attempts = 20
+        chars_per_pop = 30_000
+
+        for attempt in range(max_attempts):
+            try:
+                if as_task:
+                    task = asyncio.create_task(self.run(prompt, **run_kwargs))
+                    if task_ref_setter:
+                        task_ref_setter(task)
+                    result = await task
+                    if task_ref_setter:
+                        task_ref_setter(None)
+                else:
+                    result = await self.run(prompt, **run_kwargs)
+                return result
+            except asyncio.CancelledError:
+                if task_ref_setter:
+                    task_ref_setter(None)
+                raise
+            except (RuntimeError, Exception) as e:
+                err_str = str(e)
+                is_context_error = "context window" in err_str.lower()
+                if not is_context_error or attempt >= max_attempts - 1:
+                    if as_task and task_ref_setter:
+                        task_ref_setter(None)
+                    raise
+
+                if not self.history or not hasattr(self.history, 'messages'):
+                    raise
+
+                messages = self.history.messages
+                if len(messages) <= 2:
+                    raise
+
+                chars_popped = 0
+                msgs_popped = 0
+                iterations_popped = 0
+
+                while len(messages) > 2 and chars_popped < chars_per_pop:
+                    msg = messages.pop(1)
+                    chars_popped += len(str(getattr(msg, 'content', '')))
+                    msgs_popped += 1
+
+                    while len(messages) > 1 and not isinstance(messages[1], HumanMessage):
+                        msg = messages.pop(1)
+                        chars_popped += len(str(getattr(msg, 'content', '')))
+                        msgs_popped += 1
+
+                    iterations_popped += 1
+
+                logging.getLogger(__name__).warning(
+                    "Context window exceeded (attempt %d/%d): popped %d iterations "
+                    "(%d msgs, ~%dk chars), %d msgs remain",
+                    attempt + 1, max_attempts, iterations_popped, msgs_popped,
+                    chars_popped // 1000, len(messages),
+                )
+
+        raise RuntimeError("Context window still exceeded after maximum trim attempts")
+
+    async def compact(self, max_passes=None, notify_fn=None, event_callback_factory=None):
+        """Run multi-pass compaction on this agent's history.
+
+        Creates a no-tools clone of this agent on the same history, runs it
+        in a loop with compaction prompts, and collects all summary blocks.
+
+        Returns:
+            str: Rolled-up summary from all compaction passes
+        """
+        from .compaction import (
+            COMPACTION_USER_PROMPT, COMPACTION_CONTINUE_PROMPT,
+            parse_compaction_summaries, DEFAULT_MAX_COMPACTION_PASSES,
+        )
+
+        if max_passes is None:
+            max_passes = DEFAULT_MAX_COMPACTION_PASSES
+
+        _log = logging.getLogger(__name__)
+        compact_agent = self._build_compaction_agent()
+
+        all_blocks = []
+        for pass_num in range(max_passes):
+            prompt = COMPACTION_USER_PROMPT if pass_num == 0 else COMPACTION_CONTINUE_PROMPT
+
+            result = await compact_agent._run_with_context_guard(
+                prompt, heaven_main_callback=event_callback_factory() if event_callback_factory else None,
+            )
+
+            # Parse blocks from result
+            pass_blocks = []
+            pass_text = ""
+            if result and isinstance(result, dict):
+                hist = result.get("history")
+                if hist and hasattr(hist, 'messages'):
+                    for msg in hist.messages:
+                        content = str(getattr(msg, 'content', ''))
+                        if content:
+                            pass_text += content
+                            pass_blocks.extend(parse_compaction_summaries(content))
+
+            all_blocks.extend(pass_blocks)
+            _log.info("Compaction pass %d: %d blocks (%d total)", pass_num + 1, len(pass_blocks), len(all_blocks))
+            if notify_fn:
+                notify_fn(f"🗄️ Compaction pass {pass_num + 1}: {len(pass_blocks)} blocks (total: {len(all_blocks)})")
+
+            if "<COMPACTION_COMPLETE/>" in pass_text or "<COMPACTION_COMPLETE>" in pass_text:
+                _log.info("Compaction complete signal on pass %d", pass_num + 1)
+                break
+            if not pass_blocks and pass_num > 0:
+                _log.info("No new blocks on pass %d, stopping", pass_num + 1)
+                break
+
+        if all_blocks:
+            return "\n---\n".join(all_blocks)
+        return "(Summarizer produced no COMPACTION_SUMMARY blocks)"
+
+    async def _maybe_compact(self, conversation_history):
+        """Check transcript size and auto-compact if over threshold.
+
+        Called before every ainvoke in run_langchain.
+        """
+        if self._compacting or not self._compaction_enabled:
+            return conversation_history
+
+        total_chars = sum(
+            len(str(getattr(msg, 'content', '')))
+            for msg in conversation_history
+        )
+
+        if total_chars < self._compact_threshold:
+            return conversation_history
+
+        from .compaction import COMPACTION_BOOTSTRAP_TEMPLATE
+        _log = logging.getLogger(__name__)
+        _log.info(
+            "Auto-compaction triggered: %dk chars >= %dk threshold",
+            total_chars // 1000, self._compact_threshold // 1000,
+        )
+
+        self._compacting = True
+        try:
+            if self.history:
+                self.history.messages = conversation_history
+                saved_id = self.history.save(self.name)
+                self.original_history_id = saved_id
+
+            summary = await self.compact()
+
+            bootstrap_msg = COMPACTION_BOOTSTRAP_TEMPLATE.format(summary=summary)
+            sys_msg = conversation_history[0] if (
+                conversation_history and isinstance(conversation_history[0], SystemMessage)
+            ) else SystemMessage(content=self.config.system_prompt)
+
+            conversation_history = [
+                sys_msg,
+                HumanMessage(content=bootstrap_msg),
+            ]
+            self.history = History(messages=conversation_history.copy())
+            _log.info("Compaction complete — history reset with summary")
+        except Exception:
+            _log.exception("Auto-compaction failed, continuing with existing history")
+        finally:
+            self._compacting = False
+
+        return conversation_history
+
     ### This wont work for ADK
     def refresh_system_prompt(self):
         """Refresh the system prompt if DNA has changed"""
@@ -1283,9 +1512,9 @@ You must fix the error before proceeding."""
 
         # Map main provider to Duo-specific model
         if provider == ProviderEnum.ANTHROPIC:
-            duo_cfg.model = "claude-3-5-haiku-latest"
+            duo_cfg.model = "MiniMax-M2.5-highspeed"
         elif provider == ProviderEnum.OPENAI:
-            duo_cfg.model = "gpt-4.1-nano"
+            duo_cfg.model = "MiniMax-M2.5-highspeed"
         elif provider == ProviderEnum.GOOGLE:
             duo_cfg.model = "gemini-2.0-flash"
         elif provider == ProviderEnum.DEEPSEEK:
@@ -1551,44 +1780,59 @@ You must fix the error before proceeding."""
         """
         if use_uni_api:
             self.use_uni_api = True
-        if self.use_uni_api:
-            # Use uni-api instead of LangChain providers
-            if streamlit and output_callback and tool_output_callback:
-                return await self.run_on_uni_api(
-                    prompt=prompt,
-                    output_callback=output_callback,
-                    tool_output_callback=tool_output_callback,
-                    heaven_main_callback=heaven_main_callback
-                )
-            elif heaven_main_callback:
-                # Similar fake callback pattern for uni-api
-                def fake_output_callback(message: BaseMessage):
-                    pass
-                def fake_tool_callback(tool_result: ToolResult, tool_id: str):
-                    pass
-                return await self.run_on_uni_api(
-                    prompt=prompt,
-                    output_callback=fake_output_callback,
-                    tool_output_callback=fake_tool_callback,
-                    heaven_main_callback=heaven_main_callback
-                )
-            else:
-                return await self.run_on_uni_api(prompt=prompt)
-      
-        #
-        
-        if self.adk:
-            return await self.run_adk(prompt=prompt, notifications=notifications, streamlit=streamlit, output_callback=output_callback, tool_output_callback=tool_output_callback)
-        else:
-            if streamlit and output_callback and tool_output_callback: 
-                return await self.streamlit_run(prompt, output_callback, tool_output_callback)
-            elif heaven_main_callback:
-                # Route through run_langchain with callback — keeps all hooks and block detection
-                return await self.run_langchain(prompt, notifications, heaven_main_callback=heaven_main_callback)
 
-            else:
-                return await self.run_langchain(prompt, notifications)
+        while True:
+            result = None
 
+            if self.use_uni_api:
+                # Use uni-api instead of LangChain providers
+                if streamlit and output_callback and tool_output_callback:
+                    result = await self.run_on_uni_api(
+                        prompt=prompt,
+                        output_callback=output_callback,
+                        tool_output_callback=tool_output_callback,
+                        heaven_main_callback=heaven_main_callback
+                    )
+                elif heaven_main_callback:
+                    # Similar fake callback pattern for uni-api
+                    def fake_output_callback(message: BaseMessage):
+                        pass
+                    def fake_tool_callback(tool_result: ToolResult, tool_id: str):
+                        pass
+                    result = await self.run_on_uni_api(
+                        prompt=prompt,
+                        output_callback=fake_output_callback,
+                        tool_output_callback=fake_tool_callback,
+                        heaven_main_callback=heaven_main_callback
+                    )
+                else:
+                    result = await self.run_on_uni_api(prompt=prompt)
+          
+            elif self.adk:
+                result = await self.run_adk(prompt=prompt, notifications=notifications, streamlit=streamlit, output_callback=output_callback, tool_output_callback=tool_output_callback)
+            else:
+                if streamlit and output_callback and tool_output_callback: 
+                    result = await self.streamlit_run(prompt, output_callback, tool_output_callback)
+                elif heaven_main_callback:
+                    result = await self.run_langchain(prompt, notifications, heaven_main_callback=heaven_main_callback)
+                else:
+                    result = await self.run_langchain(prompt, notifications)
+
+            # --- SM cycle enforcement ---
+            if (self.state_machine is not None
+                    and self.min_sm_cycles is not None
+                    and self.state_machine.cycles_completed < self.min_sm_cycles):
+                # Not enough cycles complete — reset if terminal and rerun
+                if self.state_machine.is_terminal:
+                    self.state_machine.reset()
+                    self.state_machine.save_state(self.name)
+                # Rerun with continuation prompt
+                prompt = f"SM cycle {self.state_machine.cycles_completed + 1}/{self.min_sm_cycles} — continue from {self.state_machine.current_state}"
+                self.completed = False
+                self.goal = self.config.system_prompt  # Reset goal so agent mode stays active
+                continue
+
+            return result
 
     
     async def run_langchain(self, prompt: str = None, notifications=False, heaven_main_callback: Optional[Callable] = None):
@@ -1708,8 +1952,10 @@ You must fix the error before proceeding."""
                         # 7. Replace the last entry with your new combined message
                         conversation_history[-1] = new_human
                   
+                # Auto-compact if transcript exceeds threshold
+                conversation_history = await self._maybe_compact(conversation_history)
+
                 # Invoke model for a response
-                # call the generator agent
                 response = await self.chat_model.ainvoke(conversation_history)
                 if heaven_main_callback:
                     heaven_main_callback(response)
@@ -1769,6 +2015,34 @@ You must fix the error before proceeding."""
                         self._process_agent_response(response.content)
                     
     
+                # ── MiniMax XML tool call fallback ──
+                # MiniMax sometimes emits tool calls as XML text instead of proper
+                # tool_use blocks. Detect this and nudge it to use the right syntax.
+                _resp_text = response.content if isinstance(response.content, str) else ''
+                if isinstance(response.content, list):
+                    _resp_text = ' '.join(
+                        b.get('text', '') if isinstance(b, dict) else str(b)
+                        for b in response.content
+                    )
+                if '<minimax:tool_call>' in _resp_text and not getattr(response, 'tool_calls', None):
+                    print("[MiniMax XML] Detected XML tool call syntax — nudging to use proper format")
+                    nudge = HumanMessage(content=(
+                        "Hmm... that isn't the right tool use syntax. "
+                        "Do you know a different one? "
+                        "Did you use a different one before that worked right?"
+                    ))
+                    conversation_history.append(nudge)
+                    if heaven_main_callback:
+                        heaven_main_callback(nudge)
+                    tool_call_count += 1  # count against limit to prevent infinite nudge loop
+                    # Re-invoke the model with the nudge
+                    conversation_history = await self._maybe_compact(conversation_history)
+                    current_response = await self.chat_model.ainvoke(conversation_history)
+                    conversation_history.append(current_response)
+                    if heaven_main_callback:
+                        heaven_main_callback(current_response)
+                    response = current_response  # update for tool loop below
+
                 # ── Tool-call loop (matches uni_api pattern) ──
                 # response is already in conversation_history from above.
                 # LangChain populates .tool_calls on AIMessage automatically.
@@ -1792,6 +2066,18 @@ You must fix the error before proceeding."""
                         ]
                         if not matching_tools:
                             print(f"No matching tool found for {tool_name}")
+                            # MUST still append ToolMessage to keep history valid!
+                            # Without this, the API sees a tool_use with no tool_result
+                            # and returns 400: "tool call result does not follow tool call"
+                            conversation_history.append(
+                                ToolMessage(
+                                    content=f"ERROR: Tool '{tool_name}' is not available. Available tools: {[t.base_tool.name if hasattr(t, 'base_tool') else t.name for t in self.tools]}",
+                                    tool_call_id=tool_id
+                                )
+                            )
+                            if heaven_main_callback:
+                                heaven_main_callback(conversation_history[-1])
+                            tool_call_count += 1
                             continue
 
                         tool = matching_tools[0]
@@ -1866,6 +2152,7 @@ You must fix the error before proceeding."""
                         break
 
                     # Call API again — get next response
+                    conversation_history = await self._maybe_compact(conversation_history)
                     current_response = await self.chat_model.ainvoke(conversation_history)
                     conversation_history.append(current_response)
                     if heaven_main_callback:
@@ -1955,12 +2242,12 @@ You must fix the error before proceeding."""
 
         tool_log_path = "/tmp/tool_debug.log"
         # with open(tool_log_path, 'a') as f:
-            f.write("\n\nStarting tool debug log\n")
+        #     f.write("\n\nStarting tool debug log\n")
 
         # with open('/_tmp_streamlit_debug.log', 'a') as f:
-            f.write("\n\nStarting streamlit_run")
-            f.write(f"\nHistory length: {len(self.history.messages)}")
-            f.write(f"\nHistory messages: {self.history.messages}")
+        #     f.write("\n\nStarting streamlit_run")
+        #     f.write(f"\nHistory length: {len(self.history.messages)}")
+        #     f.write(f"\nHistory messages: {self.history.messages}")
             # f.write(f"\nCurrent callbacks: {output_callback}, {tool_output_callback}")
         try:
             # # If input is a string, convert to messages
@@ -1991,9 +2278,9 @@ You must fix the error before proceeding."""
                 # Condition 2: The first element is a SystemMessage, but it doesn't have the current system prompt.
                 conversation_history[0] = SystemMessage(content=self.config.system_prompt)
             # with open('/_tmp_streamlit_debug.log', 'a') as f:
-                f.write("\n=== Conversation History After System Check ===")
-                for i, msg in enumerate(conversation_history):
-                    f.write(f"\nMessage {i}: {type(msg).__name__} - {msg.content[:100]}...")
+            #     f.write("\n=== Conversation History After System Check ===")
+            #     for i, msg in enumerate(conversation_history):
+            #         f.write(f"\nMessage {i}: {type(msg).__name__} - {msg.content[:100]}...")
             
             # Check for agent command, but don't require it
             # for message in conversation_history:
@@ -2082,7 +2369,7 @@ You must fix the error before proceeding."""
                 response = await self.chat_model.ainvoke(conversation_history)
                 ###### Add output callback here
                 # with open('/_tmp_streamlit_debug.log', 'a') as f:
-                    f.write(f"\nLangchain response: {response}")
+                #     f.write(f"\nLangchain response: {response}")
                 print(f"FULL RESPONSE CONTENT: {response.content}")
                 print(f"RESPONSE TYPE: {type(response.content)}")
                 if isinstance(response.content, list):
@@ -2519,6 +2806,16 @@ You must fix the error before proceeding."""
                                     break  # Exit tool loop and continue to next iteration
                             else:
                                 print(f"No matching tool found for {tool_name}")
+                                # MUST still append ToolMessage to keep history valid!
+                                conversation_history.append(
+                                    ToolMessage(
+                                        content=f"ERROR: Tool '{tool_name}' is not available.",
+                                        tool_call_id=tool_id
+                                    )
+                                )
+                                if heaven_main_callback:
+                                    heaven_main_callback(conversation_history[-1])
+                                tool_call_count += 1
                         except Exception as e:
                             print(f"Error processing tool call: {tool_call}")
                             print(f"Error details: {e}")
@@ -3550,11 +3847,12 @@ You must fix the error before proceeding."""
         if os.path.exists(block_report_path):            
             # Read and display the file contents
             # with open(block_report_path, 'r') as f:
-                report_data = json.load(f)
-                print("Block Report Content:")
-                for key, value in report_data.items():
-                    print(f"  {key}: {value}")
-                    # this is wrong, old code. i want to make it vars so i can create a markdown file
+            #     report_data = json.load(f)
+            #     print("Block Report Content:")
+            #     for key, value in report_data.items():
+            #         print(f"  {key}: {value}")
+            #         # this is wrong, old code. i want to make it vars so i can create a markdown file
+            report_data = json.loads(open(block_report_path).read())
             
             # pull the stuff out and make it vars
            

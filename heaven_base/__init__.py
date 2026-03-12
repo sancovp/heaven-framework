@@ -88,6 +88,8 @@ from .utils.name_utils import (
 
 # Tools
 from .tools.write_block_report_tool import WriteBlockReportTool
+# HermesTool: import directly via `from heaven_base.tools.hermes_tool import HermesTool`
+# (deferred to avoid circular import through hermes_utils → baseheavenagent)
 
 # LangGraph integration
 from .langgraph import HeavenState, HeavenNodeType, completion_runner, hermes_runner
@@ -187,6 +189,7 @@ __all__ = [
     
     # Tools
     "WriteBlockReportTool",
+    "HermesTool",
     
     # LangGraph
     "HeavenState",

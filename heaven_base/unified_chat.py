@@ -95,7 +95,7 @@ class UnifiedChat:
     Also supports uni-api for custom endpoints.
     
     Usage:
-        chat = UnifiedChat(provider=ProviderEnum.ANTHROPIC, model="claude-3-5-sonnet-20241022")
+        chat = UnifiedChat(provider=ProviderEnum.ANTHROPIC, model="MiniMax-M2.5-highspeed")
         response = chat.invoke([SystemMessage(content="Hello")])
     """
     PROVIDERS = {

@@ -289,8 +289,8 @@ IMPORTANT: Only call ONE tool at a time. Never make multiple tool calls in a sin
 
 Process: Receive complete context → ConceptResolverTool → Provide canonical concept mappings""",
             tools=[ConceptResolverTool],
-            provider=ProviderEnum.OPENAI,
-            model="gpt-5-mini",  # Use mini for complex concept resolution
+            provider=ProviderEnum.ANTHROPIC,
+            model="MiniMax-M2.5-highspeed",  # Use mini for complex concept resolution
             temperature=0.2
         )
     

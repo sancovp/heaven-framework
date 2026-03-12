@@ -157,8 +157,8 @@ docstring_agent_config = HeavenAgentConfig(
         NetworkEditTool,  # For reading and updating code files
         BashTool         # For file system operations and code analysis
     ],
-    provider=ProviderEnum.OPENAI,
-    model="gpt-5-nano",
+    provider=ProviderEnum.ANTHROPIC,
+    model="MiniMax-M2.5-highspeed",
     temperature=0.1,  # Low temperature for consistent documentation style
     max_tokens=8000
 )

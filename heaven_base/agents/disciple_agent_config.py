@@ -124,8 +124,8 @@ disciple_agent_config = HeavenAgentConfig(
         ToolGenerationChainTool,
         PromptEngineeringChainTool
     ],
-    provider=ProviderEnum.OPENAI,
-    model="gpt-4o-mini",
+    provider=ProviderEnum.ANTHROPIC,
+    model="MiniMax-M2.5-highspeed",
     temperature=0.3,  # Lower temperature for consistent dispatch decisions
     max_tokens=8000
 )

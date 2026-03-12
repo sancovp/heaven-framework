@@ -135,7 +135,7 @@ async def exec_agent_run_locally_without_docker(
                     system_prompt="You are a helpful assistant who can solve tasks using agent mode, which is a prompt format that gives you a tasking system." + (command_data.get('system_prompt_suffix', '') or ''),
                     tools=base_tools + additional_tool_classes,
                     provider=ProviderEnum.ANTHROPIC,
-                    model="claude-3-5-sonnet-20241022",
+                    model="MiniMax-M2.5-highspeed",
                     temperature=0.0
                 )
                 agent = BaseHeavenAgent(config, UnifiedChat(), orchestrator=command_data.get('orchestration_preprocess', False), **(agent_constructor_kwargs or {}))
@@ -456,7 +456,7 @@ async def send_message():
                 system_prompt="You are a helpful assistant who can solve tasks using agent mode, which is a prompt format that gives you a tasking system." + (command_data.get('system_prompt_suffix', '') or ''),
                 tools=base_tools + additional_tool_classes,
                 provider=ProviderEnum.ANTHROPIC,
-                model="claude-3-5-sonnet-20241022",
+                model="MiniMax-M2.5-highspeed",
                 temperature=0.0
             )
             agent = BaseHeavenAgent(config, UnifiedChat(), orchestrator=command_data.get('orchestration_preprocess', False))

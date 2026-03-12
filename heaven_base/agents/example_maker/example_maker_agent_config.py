@@ -84,8 +84,8 @@ example_config = HeavenAgentConfig(
     name="ExampleAnalyzer",
     system_prompt="You analyze code patterns...",
     tools=[ExampleSearchTool, ExampleReaderTool],
-    provider=ProviderEnum.OPENAI,
-    model="gpt-4o-mini",
+    provider=ProviderEnum.ANTHROPIC,
+    model="MiniMax-M2.5-highspeed",
     temperature=0.3
 )
 
@@ -196,8 +196,8 @@ example_maker_agent_config = HeavenAgentConfig(
     tools=[
         NetworkEditTool  # For reading docstrings and writing examples
     ],
-    provider=ProviderEnum.OPENAI,
-    model="gpt-5",
+    provider=ProviderEnum.ANTHROPIC,
+    model="MiniMax-M2.5-highspeed",
     temperature=0.2,  # Low temperature for consistent example patterns
     max_tokens=8000
 )

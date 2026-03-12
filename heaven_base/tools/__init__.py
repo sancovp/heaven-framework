@@ -28,6 +28,13 @@ from .neo4j_tool import Neo4jTool
 from .redaction_tool import RedactionTool
 from .agent_config_test_tool import AgentConfigTestTool
 
+# HermesTool - available via direct import to avoid circular dependency:
+#   from heaven_base.tools.hermes_tool import HermesTool
+# Circular chain: baseheavenagent → tools/__init__ → hermes_tool → hermes_utils → baseheavenagent
+
+# State machine tool (factory-based, not a class export)
+from .state_machine_tool import create_sm_tool
+
 # Acolyte chain tools - excluded to avoid circular imports - available separately
 # from .acolyte_chain_tools import (
 #     ScriptOnlyChainTool,
@@ -62,7 +69,11 @@ __all__ = [
     # Additional tools
     "Neo4jTool",
     "RedactionTool",
-    "AgentConfigTestTool"
+    "AgentConfigTestTool",
+    "HermesTool",
+    
+    # State machine tool
+    "create_sm_tool",
     
     # Acolyte chain tools excluded to avoid circular imports
 ]

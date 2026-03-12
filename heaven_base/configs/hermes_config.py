@@ -26,7 +26,8 @@ class HermesConfig(BaseFunctionConfig):
             "remove_agents_config_tools": False,
             "orchestration_preprocess": False,
             "variable_inputs": {},
-            "system_prompt_suffix": None
+            "system_prompt_suffix": None,
+            "enable_compaction": False
         }
     )
   

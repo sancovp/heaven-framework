@@ -75,8 +75,8 @@ scripture_writer_agent_config = HeavenAgentConfig(
     name="ScriptureWriterAgent",
     system_prompt=SCRIPTURE_WRITER_SYSTEM_PROMPT,
     tools=[NetworkEditTool],
-    provider=ProviderEnum.OPENAI,
-    model="gpt-4o-mini",
+    provider=ProviderEnum.ANTHROPIC,
+    model="MiniMax-M2.5-highspeed",
     temperature=0.1,  # Low temperature for consistent code generation
     max_tokens=8000
 )

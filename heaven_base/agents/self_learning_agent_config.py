@@ -137,8 +137,8 @@ self_learning_agent_config = HeavenAgentConfig(
         NetworkEditTool,       # File operations and pattern analysis
         WorkflowRelayTool      # Workflow coordination and learning
     ],
-    provider=ProviderEnum.OPENAI,
-    model="gpt-4o-mini",
+    provider=ProviderEnum.ANTHROPIC,
+    model="MiniMax-M2.5-highspeed",
     temperature=0.7,  # Higher temperature for creative learning
     max_tokens=8000
 )

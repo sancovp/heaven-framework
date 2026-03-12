@@ -148,8 +148,8 @@ decider_agent_config = HeavenAgentConfig(
         NetworkEditTool,  # For reading code to analyze
         BashTool         # For code exploration and analysis
     ],
-    provider=ProviderEnum.OPENAI,
-    model="gpt-5-nano",
+    provider=ProviderEnum.ANTHROPIC,
+    model="MiniMax-M2.5-highspeed",
     temperature=0.1,  # Very low temperature for consistent decisions
     max_tokens=4000
 )

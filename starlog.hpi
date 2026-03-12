@@ -1,0 +1,94 @@
+{
+  "name": "starlog_context",
+  "metadata": {
+    "project_name": "heaven-framework-repo",
+    "project_description": "Heaven agent framework - BaseHeavenAgent and SDK",
+    "giint_project_id": "heaven-framework-repo"
+  },
+  "blocks": [
+    {
+      "type": "freestyle",
+      "content": "<STARLOG>"
+    },
+    {
+      "type": "freestyle",
+      "content": "<CaptainsLog>"
+    },
+    {
+      "type": "freestyle",
+      "content": "<ProjectMetadata>"
+    },
+    {
+      "type": "freestyle",
+      "content": "Project Name: heaven-framework-repo"
+    },
+    {
+      "type": "freestyle",
+      "content": "Description: Heaven agent framework - BaseHeavenAgent and SDK"
+    },
+    {
+      "type": "freestyle",
+      "content": "Mode: planning"
+    },
+    {
+      "type": "freestyle",
+      "content": "</ProjectMetadata>"
+    },
+    {
+      "type": "freestyle",
+      "content": "<ModeInstructions>"
+    },
+    {
+      "type": "freestyle",
+      "content": "\ud83c\udfaf You are in PLANNING mode. Call giint.get_mode_instructions(planning) for workflow guidance.\n\nCurrent Context: 0 task(s) exist but none are ready. Time to spec out and prepare tasks for execution."
+    },
+    {
+      "type": "freestyle",
+      "content": "</ModeInstructions>"
+    },
+    {
+      "type": "freestyle",
+      "content": "<ProjectStructure>"
+    },
+    {
+      "type": "freestyle",
+      "content": "*No features defined*"
+    },
+    {
+      "type": "freestyle",
+      "content": "</ProjectStructure>"
+    },
+    {
+      "type": "freestyle",
+      "content": "<CurrentTasks>"
+    },
+    {
+      "type": "freestyle",
+      "content": "*No tasks defined*"
+    },
+    {
+      "type": "freestyle",
+      "content": "</CurrentTasks>"
+    },
+    {
+      "type": "freestyle",
+      "content": "<Started>{session_start_content}</Started>"
+    },
+    {
+      "type": "freestyle",
+      "content": "<DebugDiaries>{debug_logs_content}</DebugDiaries>"
+    },
+    {
+      "type": "freestyle",
+      "content": "<Ended>{session_end_content}</Ended>"
+    },
+    {
+      "type": "freestyle",
+      "content": "</CaptainsLog>"
+    },
+    {
+      "type": "freestyle",
+      "content": "</STARLOG>"
+    }
+  ]
+}

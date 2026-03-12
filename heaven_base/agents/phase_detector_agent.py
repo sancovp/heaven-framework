@@ -154,8 +154,8 @@ IMPORTANT: Only call ONE tool at a time. Never make multiple tool calls in a sin
 
 Process: Receive summaries → PhaseDetectorTool → Provide phase analysis""",
             tools=[PhaseDetectorTool],
-            provider=ProviderEnum.OPENAI,
-            model="gpt-5-nano",
+            provider=ProviderEnum.ANTHROPIC,
+            model="MiniMax-M2.5-highspeed",
             temperature=0.3
         )
     

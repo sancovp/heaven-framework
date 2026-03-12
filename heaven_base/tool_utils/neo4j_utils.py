@@ -7,7 +7,26 @@ the knowledge graph in the Neo4j Browser.
 
 import urllib.parse
 import os
+import threading
 from typing import Dict, Any, List, Tuple, Optional
+
+# Module-level singleton — ONE driver for all callers in same process
+_singleton_lock = threading.Lock()
+_singleton_instance: "KnowledgeGraphBuilder" = None
+
+
+def get_shared_graph() -> "KnowledgeGraphBuilder":
+    """Get or create the module-level singleton KnowledgeGraphBuilder.
+
+    Thread-safe. Reuses one Neo4j driver across all callers in the process.
+    """
+    global _singleton_instance
+    if _singleton_instance is None:
+        with _singleton_lock:
+            if _singleton_instance is None:
+                _singleton_instance = KnowledgeGraphBuilder()
+                _singleton_instance._ensure_connection()
+    return _singleton_instance
 
 
 class KnowledgeGraphBuilder:

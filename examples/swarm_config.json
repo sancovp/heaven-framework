@@ -1,0 +1,26 @@
+{
+    "swarm_name": "research_team",
+    "session_name": "heaven_swarm_research_team",
+    "leader": {
+        "name": "lead_researcher",
+        "agent_config": "lead_researcher",
+        "system_prompt_suffix": "You are the team leader. Use SwarmTool to coordinate your teammates."
+    },
+    "teammates": [
+        {
+            "name": "coder",
+            "agent_config": "heaven_coder_agent",
+            "system_prompt_suffix": "You are the coding specialist on a research team."
+        },
+        {
+            "name": "analyst",
+            "agent_config": "analysis_agent",
+            "system_prompt_suffix": "You are the data analysis specialist on a research team."
+        },
+        {
+            "name": "writer",
+            "agent_config": "scripture_writer_agent",
+            "system_prompt_suffix": "You are the documentation specialist on a research team."
+        }
+    ]
+}

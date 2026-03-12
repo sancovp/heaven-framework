@@ -127,7 +127,7 @@ class EditHelper:
 
     def __init__(self):
         # with open(tool_log_path, 'a') as f:
-            f.write("\n\nEditHelper init called!\n")
+            # f.write("\n\nEditHelper init called!\n")
         self._file_history = defaultdict(list)
         
 
@@ -178,13 +178,13 @@ class EditHelper:
         if not isinstance(command_arguments[command], dict):
             raise ToolError(f"Arguments for '{command}' must be a dictionary, got {type(command_arguments[command])}")
         # with open(tool_log_path, 'a') as f:
-            f.write("\n\nuse_edit_helper entered!\n")
+            # f.write("\n\nuse_edit_helper entered!\n")
         _path = Path(path)
         # with open(tool_log_path, 'a') as f:
-            f.write("\n\nuse_edit_helper: path set!\n")
+            # f.write("\n\nuse_edit_helper: path set!\n")
         self.validate_path(command, _path, target_container)
         # with open(tool_log_path, 'a') as f:
-            f.write("\n\nuse_edit_helper: path validated!\n")
+            # f.write("\n\nuse_edit_helper: path validated!\n")
         
 
 
@@ -309,12 +309,12 @@ Chunking Instructions:
             raise
         if command == "view":
             # with open(tool_log_path, 'a') as f:
-                f.write("\n\nuse_edit_helper: entering command 'view'!\n")
+                # f.write("\n\nuse_edit_helper: entering command 'view'!\n")
             return await self.view(_path, view_range, target_container)
 
         elif command == "create":
             # with open(tool_log_path, 'a') as f:
-                f.write("\n\nuse_edit_helper: entering command 'create'!\n")
+                # f.write("\n\nuse_edit_helper: entering command 'create'!\n")
             if file_text is None:
                 raise ToolError("ERROR: Parameter `file_text` is required for command: create")
             self.write_file(_path, file_text, target_container)
@@ -351,7 +351,7 @@ Chunking Instructions:
         """
         # Check if its an absolute path
         # with open(tool_log_path, 'a') as f:
-                f.write("\n\nuse_edit_helper_validate_path: entered!\n")
+            # f.write("\n\nuse_edit_helper_validate_path: entered!\n")
         if not path.is_absolute():
             suggested_path = Path("") / path
             raise ToolError(
@@ -1028,10 +1028,10 @@ async def use_edit_tool_in_heaven(
 ) -> ToolResult:
     """Wrapper function for the edit tool to be used with BaseHeavenTool"""
     # with open(tool_log_path, 'a') as f:
-        f.write("\n\nEntering use_edit_tool_in_heaven\n")
+        # f.write("\n\nEntering use_edit_tool_in_heaven\n")
     edit_func = EditHelper() # need to fix THIS
     # with open(tool_log_path, 'a') as f:
-        f.write("\n\nEditHelper() init called!!\n")
+        # f.write("\n\nEditHelper() init called!!\n")
     return await edit_func.use_edit_helper(
         
         command=command,

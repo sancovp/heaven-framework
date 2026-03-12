@@ -838,18 +838,18 @@ def example_usage():
     game = GameBuilder() \
         .with_self_learning_agent({
             "name": "learner",
-            "model": "gpt-5-mini",
-            "provider": "OPENAI"
+            "model": "MiniMax-M2.5-highspeed",
+            "provider": "ANTHROPIC"
         }) \
         .with_player_agent({
             "name": "researcher",
-            "model": "gpt-5-mini", 
-            "provider": "OPENAI"
+            "model": "MiniMax-M2.5-highspeed", 
+            "provider": "ANTHROPIC"
         }) \
         .with_strategizer_agent({
             "name": "strategist",
-            "model": "gpt-5-mini",
-            "provider": "OPENAI"
+            "model": "MiniMax-M2.5-highspeed",
+            "provider": "ANTHROPIC"
         }) \
         .with_max_cycles(100) \
         .build()
