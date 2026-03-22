@@ -363,6 +363,7 @@ class HeavenAgentConfig(BaseModel):
     state_machine: Optional[Any] = None  # KeywordBasedStateMachine instance
     min_sm_cycles: Optional[int] = None  # Minimum complete SM cycles before agent can stop
     enable_compaction: bool = False  # Enable auto-compaction when transcript exceeds threshold
+    compact_threshold: int = 800_000  # Char count threshold for auto-compaction (~350k tokens)
 
     def _get_base_prompt(self):
         """Get the current system prompt, using evolved version if available"""
@@ -948,7 +949,7 @@ class BaseHeavenAgent(ABC):
                         
         # Compaction state
         self._compaction_enabled = config.enable_compaction
-        self._compact_threshold = 800_000  # ~350k tokens ≈ 800k chars
+        self._compact_threshold = config.compact_threshold
         self._compacting = False
 
         # Agentic state
@@ -1228,6 +1229,8 @@ You must fix the error before proceeding."""
                     client = MultiServerMCPClient({srv_name: srv_cfg})
                     srv_tools = await client.get_tools()
                     for lc_tool in srv_tools:
+                        # Prefix tool name with server name (mcp__server__tool convention)
+                        lc_tool.name = f"mcp__{srv_name}__{lc_tool.name}"
                         self.tools.append(lc_tool)
                     total_loaded += len(srv_tools)
                     logging.info(f"Loaded {len(srv_tools)} tools from MCP server '{srv_name}'")

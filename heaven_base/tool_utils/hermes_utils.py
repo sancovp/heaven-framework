@@ -343,8 +343,8 @@ async def exec_agent_run_locally_without_docker(
             return response_data
         
         except Exception as e:
-            print("DEBUG: Exception in local execution: {str(e)}")
-            print("DEBUG: Full traceback: {traceback.format_exc()}")
+            print(f"DEBUG: Exception in local execution: {str(e)}")
+            print(f"DEBUG: Full traceback: {traceback.format_exc()}")
             return {
                 "error": str(e),
                 "traceback": traceback.format_exc()
@@ -1031,7 +1031,8 @@ async def use_hermes_dict(
     hermes_config: Optional[Union[str, HermesConfig]] = None,
     variable_inputs: Optional[Dict[str, Union[Dict[str, Any], List[Any]]]] = None,
     system_prompt_suffix: Optional[str] = None,
-    agent_constructor_kwargs: Optional[Dict[str, Any]] = None
+    agent_constructor_kwargs: Optional[Dict[str, Any]] = None,
+    heaven_main_callback: Optional[Callable] = None
 ) -> Union[Dict[str, Any], str]:  # Can return dict or error string
     """Execute an agent command via Hermes. If a config is provided,
     variable_inputs should match the config's templating structure."""
@@ -1166,7 +1167,8 @@ async def use_hermes_dict(
                 orchestration_preprocess=final_params["orchestration_preprocess"],
                 system_prompt_suffix=final_params["system_prompt_suffix"],
                 remove_agents_config_tools=final_params["remove_agents_config_tools"],
-                agent_constructor_kwargs=agent_constructor_kwargs
+                agent_constructor_kwargs=agent_constructor_kwargs,
+                heaven_main_callback=heaven_main_callback
             )
         else:
             print("use_hermes_dict calling exec_agent_run_via_docker")
@@ -1296,7 +1298,7 @@ def handle_hermes_response(
             "prepared_message": f"{result}\n\nThe result was processed by the handler system.\nHANDLER: ⚠️  Hermes returned a string (likely error output).",
             "goal_accomplished": False,
             "has_block_report": False,
-            "error": True
+            "error": result
         }
     
     # Handle normal dict response
@@ -1335,7 +1337,8 @@ async def hermes_step(
     system_prompt_suffix: Optional[str] = None,
     handle_block_report_callable: Optional[Callable] = None,
     as_tool: bool = False,
-    agent_constructor_kwargs: Optional[Dict[str, Any]] = None
+    agent_constructor_kwargs: Optional[Dict[str, Any]] = None,
+    heaven_main_callback: Optional[Callable] = None
 ) -> Union[Dict[str, Any], str]:
     """Execute hermes and handle response. Returns dict unless as_tool=True."""
     result = await use_hermes_dict(
@@ -1354,7 +1357,8 @@ async def hermes_step(
         hermes_config=hermes_config,
         variable_inputs=variable_inputs,
         system_prompt_suffix=system_prompt_suffix,
-        agent_constructor_kwargs=agent_constructor_kwargs
+        agent_constructor_kwargs=agent_constructor_kwargs,
+        heaven_main_callback=heaven_main_callback
     )
     
     # Always pass through handle_hermes_response to normalize output
