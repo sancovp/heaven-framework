@@ -1188,10 +1188,28 @@ async def use_hermes_dict(
                 remove_agents_config_tools=final_params["remove_agents_config_tools"]
             )
         
+        # Check if exec returned an error dict (no "messages" key)
+        if "error" in result and "messages" not in result:
+            error_msg = result["error"]
+            tb = result.get("traceback", "")
+            formatted_output = f"===HERMES🦶🪽===\n\n⚠️ Agent execution error:\n{error_msg}\n\n{tb}\n\n===/HERMES🦶🪽==="
+            return {
+                "formatted_output": formatted_output,
+                "history_id": result.get("history_id", ""),
+                "agent_name": result.get("agent_name"),
+                "agent_status": result.get("agent_status"),
+                "has_block_report": False,
+                "last_error": error_msg,
+                "has_error": True,
+                "goal_accomplished": False,
+                "extracted_content_keys": [],
+                "raw_result": result,
+            }
+
         # Initialize variables
         has_block_report = False
         last_error = None
-        
+
         # Check if there's a block report in the agent status
         if (result.get('agent_status') and 
             'extracted_content' in result['agent_status'] and 
