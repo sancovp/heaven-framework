@@ -120,8 +120,9 @@ class KnowledgeGraphBuilder:
             The browser URL that was opened
         """
         encoded_query = urllib.parse.quote(query)
+        # TRIGGERS: Neo4j Browser via HTTP to localhost:7474
         browser_url = f"http://localhost:7474/browser/?cmd={encoded_query}"
-        
+
         # Open Firefox to the URL
         os.system(f"firefox '{browser_url}' &")
         
@@ -137,6 +138,7 @@ class KnowledgeGraphBuilder:
             The browser URL for the query
         """
         encoded_query = urllib.parse.quote(query)
+        # TRIGGERS: Neo4j Browser via HTTP to localhost:7474
         return f"http://localhost:7474/browser/?cmd={encoded_query}"
 
     def get_all_tools(self) -> List[Dict[str, Any]]:

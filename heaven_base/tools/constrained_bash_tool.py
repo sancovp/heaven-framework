@@ -131,29 +131,37 @@ class _BashSession:
         )
         await self._process.stdin.drain()
 
+        # read output line-by-line using async readline() until sentinel is found
         try:
+            output_lines = []
             async with asyncio.timeout(self._timeout):
                 while True:
-                    await asyncio.sleep(self._output_delay)
-                    output = self._process.stdout._buffer.decode()
-                    if self._sentinel in output:
-                        output = output[: output.index(self._sentinel)]
+                    line = await self._process.stdout.readline()
+                    if not line:
                         break
+                    decoded = line.decode()
+                    if self._sentinel in decoded:
+                        before_sentinel = decoded[:decoded.index(self._sentinel)]
+                        if before_sentinel:
+                            output_lines.append(before_sentinel)
+                        break
+                    output_lines.append(decoded)
         except asyncio.TimeoutError:
             self._timed_out = True
             raise ToolError(
                 f"ERROR: timed out: bash has not returned in {self._timeout} seconds and must be restarted",
             ) from None
 
+        output = "".join(output_lines)
         if output.endswith("\n"):
             output = output[:-1]
 
-        error = self._process.stderr._buffer.decode()
-        if error.endswith("\n"):
-            error = error[:-1]
-
-        self._process.stdout._buffer.clear()
-        self._process.stderr._buffer.clear()
+        error = ""
+        if self._process.stderr._buffer:  # pyright: ignore[reportAttributeAccessIssue]
+            error = self._process.stderr._buffer.decode()  # pyright: ignore[reportAttributeAccessIssue]
+            self._process.stderr._buffer.clear()  # pyright: ignore[reportAttributeAccessIssue]
+            if error.endswith("\n"):
+                error = error[:-1]
 
         return CLIResult(output=output, error=error)
 

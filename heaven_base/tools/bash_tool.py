@@ -72,34 +72,41 @@ class _BashSession:
         )
         await self._process.stdin.drain()
 
-        # read output from the process, until the sentinel is found
+        # read output line-by-line using async readline() until sentinel is found
+        # readline() properly awaits data from the subprocess — no polling needed
         try:
+            output_lines = []
             async with asyncio.timeout(self._timeout):
                 while True:
-                    await asyncio.sleep(self._output_delay)
-                    # if we read directly from stdout/stderr, it will wait forever for
-                    # EOF. use the StreamReader buffer directly instead.
-                    output = self._process.stdout._buffer.decode()  # pyright: ignore[reportAttributeAccessIssue]
-                    if self._sentinel in output:
-                        # strip the sentinel and break
-                        output = output[: output.index(self._sentinel)]
+                    line = await self._process.stdout.readline()
+                    if not line:
+                        # EOF — process exited
                         break
+                    decoded = line.decode()
+                    if self._sentinel in decoded:
+                        # sentinel found — don't include it in output
+                        before_sentinel = decoded[:decoded.index(self._sentinel)]
+                        if before_sentinel:
+                            output_lines.append(before_sentinel)
+                        break
+                    output_lines.append(decoded)
         except asyncio.TimeoutError:
             self._timed_out = True
             raise ToolError(
                 f"ERROR: timed out: bash has not returned in {self._timeout} seconds and must be restarted",
             ) from None
 
+        output = "".join(output_lines)
         if output.endswith("\n"):
             output = output[:-1]
 
-        error = self._process.stderr._buffer.decode()  # pyright: ignore[reportAttributeAccessIssue]
-        if error.endswith("\n"):
-            error = error[:-1]
-
-        # clear the buffers so that the next output can be read correctly
-        self._process.stdout._buffer.clear()  # pyright: ignore[reportAttributeAccessIssue]
-        self._process.stderr._buffer.clear()  # pyright: ignore[reportAttributeAccessIssue]
+        # stderr: read whatever is available (non-blocking via buffer)
+        error = ""
+        if self._process.stderr._buffer:  # pyright: ignore[reportAttributeAccessIssue]
+            error = self._process.stderr._buffer.decode()  # pyright: ignore[reportAttributeAccessIssue]
+            self._process.stderr._buffer.clear()  # pyright: ignore[reportAttributeAccessIssue]
+            if error.endswith("\n"):
+                error = error[:-1]
 
         return CLIResult(output=output, error=error)
 
@@ -155,14 +162,8 @@ class BashToolArgsSchema(ToolArgsSchema):
         'command': {
             'name': 'command',
             'type': 'str',
-            'description': 'The bash command to run. Required unless restart is set to true. For running files inside /core/, you may need to set PYTHONPATH=/home/GOD/core',
-            'required': False  # Not required when restarting
-        },
-        'restart': {
-            'name': 'restart',
-            'type': 'bool',
-            'description': 'Specifying true will restart this tool. Otherwise, leave this unspecified or false. If you receive a timeout error, BashTool must be restarted without any command before it can be used again.',
-            'required': False  # Defaults to false
+            'description': 'The bash command to run. To restart the shell session (e.g. after a timeout), pass the exact string "restart" as the command.',
+            'required': True
         }
     }
 
@@ -217,10 +218,9 @@ class BashTool(BaseHeavenTool):
     def create(cls, adk: bool = False):
         session = _BashSession()
     
-        async def wrapped_func(command: Optional[str] = None,
-                               restart: Optional[bool] = None):
+        async def wrapped_func(command: str):
             nonlocal session
-            if restart:
+            if command.strip().lower() == "restart":
                 if session._started:
                     session.stop()
                 session = _BashSession()
@@ -228,9 +228,7 @@ class BashTool(BaseHeavenTool):
                 return "tool has been restarted."
             if not session._started:
                 await session.start()
-            if command is not None:
-                return await session.run(command)
-            raise ToolError("ERROR: no command provided.")
+            return await session.run(command)
     
         cls.func = wrapped_func
         instance = super().create(adk=adk)

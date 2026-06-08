@@ -25,6 +25,7 @@ class HeavenCLI:
     def __init__(
         self,
         agent_config: Union[HeavenAgentConfig, str, type],
+        # TRIGGERS: CAVE/sancrev via HTTP to localhost:8080
         server_url: str = "http://localhost:8080",
         session_id: Optional[str] = None
     ):
@@ -431,6 +432,7 @@ class HeavenCLI:
 
 def make_cli(
     agent_config: Union[HeavenAgentConfig, str, type],
+    # TRIGGERS: CAVE/sancrev via HTTP to localhost:8080
     server_url: str = "http://localhost:8080"
 ) -> HeavenCLI:
     """Create a configured CLI instance.

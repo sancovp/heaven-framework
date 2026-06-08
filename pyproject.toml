@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "heaven-framework"
-version = "0.1.22"
+version = "0.1.21"
 description = "HEAVEN - Hierarchical, Embodied, Autonomously Validating Evolution Network"
 readme = "README.md"
 authors = [
@@ -24,21 +24,21 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
-    "google-adk>=0.2.0",
-    "google-genai>=1.11.0",
-    "langchain-anthropic>=0.3.13",
-    "langchain-core>=0.3.65",
-    "langchain-deepseek>=0.1.2",
-    "langchain-google-genai>=2.1.5",
-    "langchain-groq>=0.2.4",
-    "langchain-openai>=0.3.22",
-    "langchain>=0.1.0",
-    "langgraph>=0.2.0",
-    "litellm>=1.67.5",
-    "pydantic>=2.11.7",
-    "requests>=2.31.0",
-    "httpx>=0.24.0",
-    "fastmcp==2.12.2",
+    "google-adk==1.31.1",
+    "google-genai==1.73.1",
+    "langchain-anthropic==0.3.13",
+    "langchain-core==0.3.84",
+    "langchain-deepseek==0.1.2",
+    "langchain-google-genai==2.1.5",
+    "langchain-groq==0.2.4",
+    "langchain-openai==0.3.22",
+    "langchain==0.3.28",
+    "langgraph==0.2.60",
+    "litellm==1.80.0",
+    "pydantic==2.10.6",
+    "requests==2.33.1",
+    "httpx==0.28.1",
+    "fastmcp==2.9.0",
 ]
 
 [project.optional-dependencies]

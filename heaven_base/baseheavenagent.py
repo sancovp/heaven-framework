@@ -1882,6 +1882,8 @@ You must fix the error before proceeding."""
                 self._detect_agent_command(prompt)
                 if self.goal is None:
                     conversation_history.append(HumanMessage(content=prompt))
+                    if heaven_main_callback:
+                        heaven_main_callback(conversation_history[-1])
             if self.continuation_iterations != 0:
                 self.current_iterations = 1
                 self.max_iterations = self.continuation_iterations
@@ -1914,6 +1916,8 @@ You must fix the error before proceeding."""
                 next_prompt = self._format_agent_prompt() if (self.goal or self.continuation_prompt) else conversation_history[-1].content
                 if self.goal or self.continuation_prompt:  # Add formatted prompt in agent mode or continuation
                     conversation_history.append(HumanMessage(content=next_prompt))
+                    if heaven_main_callback:
+                        heaven_main_callback(conversation_history[-1])
                 # if self.goal:  # Only add formatted prompt in agent mode
                 #     conversation_history.append(HumanMessage(content=next_prompt))
                     
@@ -2053,6 +2057,12 @@ You must fix the error before proceeding."""
 
                 while getattr(current_response, 'tool_calls', None) and tool_call_count < self.max_tool_calls:
                     # Execute ALL tool calls from this response
+                    # Track processed ids so we can inject synthetic ToolMessages for any
+                    # abandoned tool_uses (when max_tool_calls is hit mid-iteration). Without
+                    # this, orphan tool_use blocks in the assistant message trigger MiniMax
+                    # 400 "tool call result does not follow tool call (2013)" on the next request.
+                    _expected_ids = {tc.get('id', '') for tc in current_response.tool_calls if tc.get('id')}
+                    _processed_ids = set()
                     for tc in current_response.tool_calls:
                         if tool_call_count >= self.max_tool_calls:
                             break
@@ -2061,6 +2071,8 @@ You must fix the error before proceeding."""
                         tool_name = tc.get('name', '')
                         tool_args = tc.get('args', tc.get('input', {}))
                         tool_id = tc.get('id', '')
+                        if tool_id:
+                            _processed_ids.add(tool_id)
 
                         # Find matching tool
                         matching_tools = [
@@ -2132,6 +2144,26 @@ You must fix the error before proceeding."""
                             self._handle_task_system_tool(tool_args)
 
                         tool_call_count += 1
+
+                    # Inject synthetic ToolMessages for any tool_use abandoned by the
+                    # max_tool_calls break above (orphan tool_use → MiniMax 400 (2013)
+                    # on next request). Preserves the parallel-tool-call shape MiniMax
+                    # expects: every tool_use in an assistant message has a matching
+                    # tool_result in the following user message.
+                    _abandoned_ids = _expected_ids - _processed_ids
+                    if _abandoned_ids:
+                        for tc in current_response.tool_calls:
+                            tc_id = tc.get('id', '')
+                            if tc_id in _abandoned_ids:
+                                tc_name = tc.get('name', '?')
+                                conversation_history.append(
+                                    ToolMessage(
+                                        content=f"⚠️ Tool call '{tc_name}' abandoned: max_tool_calls ({self.max_tool_calls}) reached. Retry next iteration.",
+                                        tool_call_id=tc_id,
+                                    )
+                                )
+                                if heaven_main_callback:
+                                    heaven_main_callback(conversation_history[-1])
 
                     # If blocked, generate report and exit
                     if blocked:
@@ -3844,6 +3876,7 @@ You must fix the error before proceeding."""
 
     def create_block_report(self):
         # look up the json file
+        # CONNECTS_TO: /tmp/block_report.json (read) — also accessed by write_block_report_tool.py
         block_report_path = "/tmp/block_report.json"
         
         # Check if the block report file was created

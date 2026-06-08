@@ -1,21 +1,144 @@
-MIT License
+GNOSYS Personal Builder License (GPBL) v1.0
 
-Copyright (c) 2024 HEAVEN Framework Contributors
+Copyright © 2025 Isaac Wostrel-Rubin
+Guardian of the GNOSYS / Sanctuary Stack
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+GNOSYS and the Sanctuary libraries are free, open, and hackable for personal and internal use.
+Run them, fork them, and share them — with one core constraint:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+You can't sell them or run them as-a-service without a separate commercial license from me.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+⸻
+
+1  You Can
+
+You are granted a non-exclusive, non-transferable, worldwide license to:
+    •    Run GNOSYS / Sanctuary libraries anywhere, for yourself or inside your own org, for free.
+    •    Study, modify, and extend the code, including:
+    •    Changing behavior, structure, or architecture
+    •    Adding MCPs, agents, workflows, UI, or integrations
+    •    Share your modified versions (forks, patches, examples) publicly, as long as:
+    •    You keep this license text, and
+    •    Your distribution stays non-commercial (see §3).
+
+This applies to:
+    •    The GNOSYS meta-library
+    •    Sanctuary / STARSYSTEM / HEAVEN / CartON / related libraries and tools in this repo
+    •    Any example configs or reference agents shipped with them
+
+unless a specific file or subproject explicitly states a different license.
+
+⸻
+
+2  Please Do
+
+To keep the ecosystem coherent:
+    •    Keep this license notice and a link back to the main repo.
+    •    Clearly mark modifications (e.g. in the README:
+"This is a modified version of GNOSYS by <your name>."
+    •    When possible, credit GNOSYS / Sanctuary in docs or marketing as the underlying stack.
+
+⸻
+
+3  You Can't (Without a Commercial License)
+
+You may not, without a separate written commercial license from Isaac Wostrel-Rubin:
+    •    Sell GNOSYS / Sanctuary itself, including:
+    •    Paid downloads, paywalled builds, or subscriptions
+    •    "Pro" binaries where GNOSYS is the primary value
+    •    Offer GNOSYS / Sanctuary as a hosted or managed service, including:
+    •    SaaS platforms, hosted agents, or API products where:
+    •    GNOSYS / Sanctuary code is a core dependency and
+    •    Third parties sign up, pay, or are billed for access
+    •    Bundle GNOSYS / Sanctuary into another paid product, where:
+    •    The libraries are a key part of the product's value, even if not visible
+    •    Or the product would not realistically function as-sold without them
+    •    Re-license this code under a different, more permissive or commercial license.
+
+If you want to:
+    •    Build a SaaS,
+    •    Embed this stack in a product, or
+    •    Sell access to agents powered by GNOSYS / Sanctuary,
+then you need a commercial license. See §9.
+
+⸻
+
+4  What Is Allowed Commercially
+
+You may, without a separate license:
+    •    Charge for your time and expertise, including:
+    •    Consulting, coaching, architecture, and design work
+    •    Installation, customization, and integration of GNOSYS / Sanctuary on the client's own infrastructure
+    •    Teaching others how to use, extend, or modify the stack
+    •    Use GNOSYS internally to:
+    •    Accelerate your own work
+    •    Build internal tools and workflows not sold as products
+    •    Support your own content, research, or services
+
+Put simply:
+
+Selling your brain is OK. Selling GNOSYS / Sanctuary as a product or hosted service is not, unless you've got a commercial agreement.
+
+⸻
+
+5  Trademarks & Naming
+
+"GNOSYS", "Sanctuary System", "STARSYSTEM", "Victory-Everything Chain (VEC)", "OMNISANC", and related marks, names, or logos may be protected as trademarks or service marks.
+
+Under this license you:
+    •    May reference these names factually (e.g. "Built on GNOSYS"), and
+    •    May not imply official endorsement, partnership, or authorship by Isaac Wostrel-Rubin unless you actually have that agreement.
+
+If you fork the stack into your own product, use your own brand and clearly mark it as such.
+
+⸻
+
+6  No Warranty
+
+The software is provided "as is", without warranty of any kind, express or implied, including but not limited to:
+    •    Merchantability
+    •    Fitness for a particular purpose
+    •    Non-infringement
+
+You assume all risk for using, modifying, or deploying this code.
+
+⸻
+
+7  Limitation of Liability
+
+In no event shall the author(s) or copyright holder(s) be liable for any claim, damages, or other liability, whether in an action of contract, tort, or otherwise, arising from, out of, or in connection with the software or the use or other dealings in the software.
+
+⸻
+
+8  Termination
+
+If you violate this license and do not remedy the violation within 30 days of being notified:
+    •    Your rights under this license automatically terminate.
+    •    You must stop using, distributing, or hosting GNOSYS / Sanctuary under this license.
+
+The author may grant you a new license at their sole discretion after remediation.
+
+⸻
+
+9  Commercial Licensing
+
+If you want to:
+    •    Run GNOSYS / Sanctuary as a SaaS or hosted agent platform
+    •    Embed it into a commercial product
+    •    Resell it or bundle it into paid offerings
+
+you must obtain a commercial license.
+
+To do that:
+    1.    Book a paid licensing meeting via
+👉 https://isaacwr.carrd.co
+and note that you are requesting a GNOSYS / Sanctuary commercial license.
+    2.    The meeting payment reserves Isaac's time and is non-refundable if you decide not to purchase the license.
+    3.    If you proceed, the meeting fee will be discounted against the license price.
+
+The standard commercial license is:
+
+$997 USD — universal commercial rights
+(to use GNOSYS / Sanctuary in your own commercial products and services, subject to the terms in the commercial agreement).
+
+Do not book this meeting unless you are seriously intending to obtain the license; the call fee compensates for time even if you choose not to move forward.

@@ -45,6 +45,7 @@ def write_block_report_func(completed_tasks: List[str], current_task: str, expla
     }
     
     # Use a consistent filepath
+    # CONNECTS_TO: /tmp/block_report.json (write) — also accessed by baseheavenagent.py
     filepath = "/tmp/block_report.json"
     
     # Write report to temp file

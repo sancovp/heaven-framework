@@ -77,3 +77,7 @@ def register_skill_hooks(registry: HookRegistry, agent_name: str, skillset_name:
     if skillset_name:
         registry.register(HookPoint.BEFORE_SYSTEM_PROMPT, make_skill_description_hook(skillset_name, agent_id=agent_name))
     registry.register(HookPoint.BEFORE_TOOL_CALL, make_skill_identity_hook(agent_name))
+
+    # Claude parity: auto-inject .claude/ rules + CLAUDE.md when working in repos
+    from .claude_parity import register_claude_parity
+    register_claude_parity(registry)

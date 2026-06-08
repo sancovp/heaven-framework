@@ -1,5 +1,17 @@
 # HEAVEN Base Framework
 
+<!-- SCALABLE-PUBLISHING:AUTOGEN START (managed block — do not edit between these markers) -->
+
+![License](https://img.shields.io/badge/license-MIT_License-blue.svg) ![Stars](https://img.shields.io/github/stars/sancovp/heaven-framework.svg?style=social) ![Updated](https://img.shields.io/badge/updated-2026_03_22-lightgrey.svg)
+
+⭐ 0 stars • 🕑 Updated 2026-03-22
+
+[Marketplace](https://github.com/sancovp/sancrev-marketplace) • [Docs](https://sancovp.github.io/aisaac/)
+
+📦 Auto-published from the monorepo • [CHANGELOG](./CHANGELOG.md) • [sancovp/heaven-framework](https://github.com/sancovp/heaven-framework)
+
+<!-- SCALABLE-PUBLISHING:AUTOGEN END -->
+
 **H**ierarchical, **E**mbodied, **A**utonomously **V**alidating **E**volution **N**etwork
 
 HEAVEN Base is the foundational framework for building autonomous AI agents with cross-framework compatibility, event-driven architecture, and self-modifying capabilities. This is the core library that powers the HEAVEN metaprogrammatic agent framework where prompts, tools, agents, and code can all generate each other.

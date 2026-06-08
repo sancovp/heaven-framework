@@ -103,6 +103,7 @@ class HeavenClient:
     def __init__(
         self,
         agent_config: Union[HeavenAgentConfig, str, type],
+        # TRIGGERS: CAVE/sancrev via HTTP to localhost:8080
         server_url: str = "http://localhost:8080",
         session_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
@@ -503,6 +504,7 @@ class HeavenClient:
 
 def make_client(
     agent_config: Union[HeavenAgentConfig, str, type],
+    # TRIGGERS: CAVE/sancrev via HTTP to localhost:8080
     server_url: str = "http://localhost:8080",
     **kwargs,
 ) -> HeavenClient:
@@ -533,6 +535,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description="HEAVEN non-interactive client — send messages from the shell",
     )
     parser.add_argument(
+        # TRIGGERS: CAVE/sancrev via HTTP to localhost:8080
         "--server", default="http://localhost:8080", help="HEAVEN server URL"
     )
     parser.add_argument(
