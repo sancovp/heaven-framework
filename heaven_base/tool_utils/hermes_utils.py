@@ -257,7 +257,11 @@ async def exec_agent_run_locally_without_docker(
                         # Try HEAVEN_DATA_DIR/agents/ first
                         heaven_data_dir = os.environ.get('HEAVEN_DATA_DIR')
                         if heaven_data_dir:
-                            custom_config_path = os.path.join(heaven_data_dir, 'agents', f"{config_name}.py")
+                            # Canonical shape: nested agents/{name}/{name}_config.py (the agent's home dir,
+                            # where day-by-day histories save). Fall back to flat agents/{name}_config.py.
+                            nested_config_path = os.path.join(heaven_data_dir, 'agents', agent_name.lower(), f"{config_name}.py")
+                            flat_config_path = os.path.join(heaven_data_dir, 'agents', f"{config_name}.py")
+                            custom_config_path = nested_config_path if os.path.exists(nested_config_path) else flat_config_path
                             if os.path.exists(custom_config_path):
                                 try:
                                     spec = importlib.util.spec_from_file_location(config_name, custom_config_path)
@@ -272,7 +276,12 @@ async def exec_agent_run_locally_without_docker(
                             config_path = f"heaven_base.agents.{config_name}"
                             config_module = importlib.import_module(config_path)
                         # print(f"Looking for config at: {{config_path}}")
-                        config = getattr(config_module, config_name)
+                        # Accept `{name}_config` (flat convention) OR `agent_config` (canonical nested-dir
+                        # convention written by the agentmaker). The nested dir may be a Replicant (handled by
+                        # the branch above) or a config module exposing `agent_config`.
+                        config = getattr(config_module, config_name, None)
+                        if config is None:
+                            config = getattr(config_module, 'agent_config')
                         config.system_prompt += (command_data.get('system_prompt_suffix', '') or '')
                         
                         

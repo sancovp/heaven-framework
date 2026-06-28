@@ -221,6 +221,12 @@ class UnifiedChat:
 
         elif provider == ProviderEnum.ANTHROPIC:
             kwargs['model'] = model
+            # Exponential backoff on 429: ChatAnthropic -> the Anthropic SDK retries with growing
+            # waits, honoring Retry-After. Default is 2 (too few for a MiniMax rate-limit storm), so a
+            # storm exhausts the retries and the call fails -> the summarizer burns its requeues and
+            # gives up. Bump to 8 so every Anthropic/MiniMax caller backs off instead of failing.
+            # (setdefault: an explicit caller-supplied max_retries still wins.)
+            kwargs.setdefault("max_retries", 8)
             # MiniMax models use Anthropic-compatible API with different key and URL
             if model and model.lower().startswith("minimax"):
                 kwargs["api_key"] = DynamicString(EnvConfigUtil.get_env_value, "MINIMAX_API_KEY")

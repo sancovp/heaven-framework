@@ -29,6 +29,22 @@ class TaskSystemToolArgsSchema(ToolArgsSchema):
     }
 
 
+# Benign corrective tool result returned when a task-system call arrives with its
+# REQUIRED arg missing/null. VERIFIED 2026-06-10 (live minimax probe): the MiniMax
+# anthropic-compat endpoint drops/nulls OPTIONAL args whose schema is anyOf[type,null]
+# (heaven marks tasks/task_name optional, so they arrive null on EVERY call), even though
+# the model's own reasoning contains the value. This is endpoint-side, not a heaven
+# build/parse defect (heaven sends a valid schema and faithfully parses the null it gets
+# back). Rather than ERROR (which agents perseverate on, burning the tool-call budget),
+# return guidance to ignore the task system and proceed with the real goal. Scoped to the
+# task-system tool only.
+TASK_SYSTEM_NULL_ARG_GUIDANCE = (
+    "TASK SYSTEM NON-FUNCTIONAL in this runtime (arguments did not arrive). "
+    "Do NOT retry task tools. Ignore the task system entirely and proceed directly "
+    "with your goal; finish normally."
+)
+
+
 def task_system_func(operation: str, tasks: list = None, task_name: str = None) -> str:
     """
     Task system CLI. Manages the agent's task list during goal execution.
@@ -37,15 +53,19 @@ def task_system_func(operation: str, tasks: list = None, task_name: str = None) 
         update_tasks: Replace the entire task list. Requires 'tasks' list.
         complete_task: Mark a task as done and advance. Requires 'task_name'.
         goal_accomplished: Signal that the goal is fully complete.
+
+    MITIGATION (2026-06-10): when a required arg arrives missing/null (the MiniMax
+    endpoint arg-drop, see TASK_SYSTEM_NULL_ARG_GUIDANCE), return benign corrective
+    guidance instead of an ERROR so agents stop retrying and go straight to real work.
     """
     if operation == "update_tasks":
         if not tasks or not isinstance(tasks, list):
-            return "ERROR: 'tasks' must be a non-empty list of strings for update_tasks"
+            return TASK_SYSTEM_NULL_ARG_GUIDANCE
         return f"Task list updated to {len(tasks)} tasks: {tasks}. Current task: {tasks[0]}"
 
     elif operation == "complete_task":
         if not task_name:
-            return "ERROR: 'task_name' required for complete_task"
+            return TASK_SYSTEM_NULL_ARG_GUIDANCE
         return f"Task '{task_name}' marked complete."
 
     elif operation == "goal_accomplished":
