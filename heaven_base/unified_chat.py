@@ -21,7 +21,8 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, Base
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
-from langchain_google_genai import ChatGoogleGenerativeAI
+# langchain_google_genai (Gemini) is an OPTIONAL dep (`pip install heaven-framework[google]`) so google/ADK
+# stay out of the base install — ChatGoogleGenerativeAI is imported lazily in create() when provider==GOOGLE.
 from langchain_groq import ChatGroq
 from langchain_deepseek import ChatDeepSeek
 from enum import Enum
@@ -101,7 +102,7 @@ class UnifiedChat:
     PROVIDERS = {
         ProviderEnum.ANTHROPIC: ChatAnthropic,
         ProviderEnum.OPENAI: ChatOpenAI,
-        ProviderEnum.GOOGLE: ChatGoogleGenerativeAI,
+        # ProviderEnum.GOOGLE → imported lazily in create() (optional [google] extra; keeps google/ADK out of base)
         ProviderEnum.GROQ: ChatGroq,
         ProviderEnum.DEEPSEEK: ChatDeepSeek
     }
@@ -124,10 +125,19 @@ class UnifiedChat:
         Returns:
             BaseChatModel: Instantiated chat model.
         """
-        if provider not in cls.PROVIDERS:
-            raise ValueError(f"Unsupported provider: {provider}. Supported providers: {list(cls.PROVIDERS.keys())}")
-        
-        ModelClass = cls.PROVIDERS[provider]
+        if provider == ProviderEnum.GOOGLE:
+            # Gemini is optional — google deps aren't installed by default (no ADK). pip install heaven-framework[google]
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+            except ImportError as e:
+                raise ImportError(
+                    "The GOOGLE provider requires the optional 'google' extra: pip install heaven-framework[google]"
+                ) from e
+            ModelClass = ChatGoogleGenerativeAI
+        elif provider not in cls.PROVIDERS:
+            raise ValueError(f"Unsupported provider: {provider}. Supported providers: {list(cls.PROVIDERS.keys()) + [ProviderEnum.GOOGLE]}")
+        else:
+            ModelClass = cls.PROVIDERS[provider]
         
         # Load provider-specific settings ENV values, for now it is only the api key
         kwargs["api_key"] = DynamicString(EnvConfigUtil.get_env_value, f"{provider.name}_API_KEY")

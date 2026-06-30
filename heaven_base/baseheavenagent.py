@@ -345,6 +345,10 @@ class HeavenAgentConfig(BaseModel):
     additional_kws: List[str] = Field(default_factory=list)
     additional_kw_instructions: str = Field(default="")
     known_config_paths: Optional[List[str]] = None
+    contacts: Optional[List[str]] = None  # HERMES SWITCHBOARD scope: agents this one may call via HermesTool.
+                                          # None/[] → "no contacts" (NOT the global agent dump). Replaces the
+                                          # old global get_agent_modules() default in the switchboard.
+    contact_skill: Optional[str] = None   # the add-contact skill name rendered in the "no contacts" message
     system_prompt_config: Optional[Any] = None # Only takes a SystemPromptConfig subclass but did it this way because the parent will sometimes not be superinitialized yet
     prompt_suffix_blocks: Optional[List[str]] = None  # List of block names to append
         # Cache for evolved prompt and timestamp
@@ -827,6 +831,15 @@ class BaseHeavenAgent(ABC):
         if config.skillset:
             from .hooks.default_hooks import register_skill_hooks
             register_skill_hooks(self.hooks, agent_name=config.name or "unnamed", skillset_name=config.skillset)
+        # Always-on, dep-free skill auto-load for EVERY agent (no skillset / skill_manager / carton needed):
+        # injects the AVAILABLE_SKILLS catalog (name+desc+path) into the system prompt; the agent reads the
+        # full SKILL.md on demand. The native skillset path above (make_skill_description_hook) uses
+        # skill_manager.equip/list → pulls carton_mcp; this does NOT — pure file-read + inject.
+        try:
+            from .hooks.skill_autoload import register_skill_autoload
+            register_skill_autoload(self.hooks)
+        except Exception:
+            pass
         self.max_tool_calls = max_tool_calls
         self.config = config
         self.name = config.name if config.name is not None else "unnamed_agent"
@@ -961,10 +974,18 @@ class BaseHeavenAgent(ABC):
         self.current_iteration: int = 1
         self.completed = False
         self._current_extracted_content = None
+        # HERMES SWITCHBOARD — scoped to this agent's CONTACTS (not the global agent dump). `contacts` None/[]
+        # renders a "no contacts" message naming the agent's add-contact skill; an explicit list renders those.
+        _contacts = getattr(self.config, "contacts", None)
+        if _contacts:
+            _agents_block = ("The following Agents (your contacts) can be used in the `agent` arg of "
+                             f"HermesTool:[\n        {', '.join(_contacts)}]")
+        else:
+            _reqskill = getattr(self.config, "contact_skill", None) or "your contact-management skill"
+            _agents_block = f"# You have no contacts. Add a contact by {_reqskill}"
         self.orchestration_lists = f"""
         <HERMES SWITCHBOARD>
-        The following Agents can be used in the `agent` arg of HermesTool:[
-        {get_agent_modules()}]
+        {_agents_block}
         The following Tools can be used in the `additional_tools` arg of HermesTool:[
         {get_tool_modules()}]
         </HERMES SWITCHBOARD>
@@ -2097,23 +2118,29 @@ You must fix the error before proceeding."""
 
                         tool = matching_tools[0]
 
-                        # Fire BEFORE_TOOL_CALL hook
-                        self._fire_hook(HookPoint.BEFORE_TOOL_CALL,
+                        # Fire BEFORE_TOOL_CALL hook — VETO-CAPABLE: a hook may BLOCK the tool by setting
+                        # ctx.data["block"] = True (+ optional ctx.data["block_message"]). The tool is then
+                        # skipped and that message becomes the ToolResult → the ToolMessage the model sees.
+                        _btc = self._fire_hook(HookPoint.BEFORE_TOOL_CALL,
                             iteration=self.current_iteration,
                             tool_name=tool_name, tool_args=tool_args)
 
-                        # Execute tool (throttle to prevent CPU spin with fast models)
-                        await asyncio.sleep(0.1)
-                        try:
-                            if hasattr(tool, 'base_tool'):
-                                tool_result = await tool._arun(**tool_args)
-                            else:
-                                from langchain_core.runnables import RunnableConfig
-                                tool_result = ToolResult(output=str(
-                                    await tool._arun(config=RunnableConfig(), **tool_args)
-                                ))
-                        except Exception as e:
-                            tool_result = ToolResult(error=str(e))
+                        if _btc is not None and _btc.data.get("block"):
+                            tool_result = ToolResult(error=str(_btc.data.get("block_message")
+                                or f"Tool '{tool_name}' was blocked by a BEFORE_TOOL_CALL hook."))
+                        else:
+                            # Execute tool (throttle to prevent CPU spin with fast models)
+                            await asyncio.sleep(0.1)
+                            try:
+                                if hasattr(tool, 'base_tool'):
+                                    tool_result = await tool._arun(**tool_args)
+                                else:
+                                    from langchain_core.runnables import RunnableConfig
+                                    tool_result = ToolResult(output=str(
+                                        await tool._arun(config=RunnableConfig(), **tool_args)
+                                    ))
+                            except Exception as e:
+                                tool_result = ToolResult(error=str(e))
 
                         # Fire AFTER_TOOL_CALL hook
                         self._fire_hook(HookPoint.AFTER_TOOL_CALL,

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "heaven-framework"
-version = "0.1.23"
+version = "0.1.26"
 description = "HEAVEN - Hierarchical, Embodied, Autonomously Validating Evolution Network"
 readme = "README.md"
 authors = [
@@ -24,12 +24,13 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
-    "google-adk==1.31.1",
-    "google-genai==1.73.1",
+    # google-adk / google-genai / langchain-google-genai are deliberately NOT here. ADK is dead-by-default
+    # (opt-in `create(adk=True)`, never called) and `google-adk==1.31.1` forces `pydantic>=2.12`, breaking the
+    # `pydantic==2.10.6` pin below + every downstream (sanctuary-dna, cave-harness). The Gemini (GOOGLE) provider
+    # is optional: `pip install heaven-framework[google]` (ChatGoogleGenerativeAI is imported lazily in unified_chat).
     "langchain-anthropic==0.3.13",
     "langchain-core==0.3.84",
     "langchain-deepseek==0.1.2",
-    "langchain-google-genai==2.1.5",
     "langchain-groq==0.2.4",
     "langchain-openai==0.3.22",
     "langchain==0.3.28",
@@ -42,6 +43,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+google = [
+    # The Gemini provider (ProviderEnum.GOOGLE) + the opt-in ADK tool path. NOT installed by default —
+    # google-adk forces pydantic>=2.12, so it lives here, isolated from the base install.
+    "langchain-google-genai==2.1.5",
+    "google-genai==1.73.1",
+    "google-adk==1.31.1",
+]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
