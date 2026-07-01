@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "heaven-framework"
-version = "0.1.28"
+version = "0.1.29"
 description = "HEAVEN - Hierarchical, Embodied, Autonomously Validating Evolution Network"
 readme = "README.md"
 authors = [
@@ -40,6 +40,7 @@ dependencies = [
     "requests==2.33.1",
     "httpx==0.28.1",
     "fastmcp==2.9.0",
+    "skill-manager-mcp>=0.1.11",
 ]
 
 [project.optional-dependencies]

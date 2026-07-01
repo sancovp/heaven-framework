@@ -27,7 +27,7 @@ async def skill_tool_func(
     try:
         from skill_manager.treeshell_functions import get_skill
     except ImportError:
-        raise ToolError("skill_manager package not installed")
+        raise ToolError("skill-manager-mcp not installed (provides the skill_manager module)")
     
     # Just forward - no checking, no validation
     return get_skill(skill_name)
