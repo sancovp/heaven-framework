@@ -17,6 +17,7 @@ from .registry_tool import RegistryTool
 from .matryoshka_registry_tool import MatryoshkaRegistryTool
 from .workflow_relay_tool import WorkflowRelayTool
 from .view_history_tool import ViewHistoryTool
+from .skill_tool import SkillTool
 
 # Prompt block tools
 from .write_prompt_block_tool import WritePromptBlockTool
@@ -60,6 +61,7 @@ __all__ = [
     "MatryoshkaRegistryTool",
     "WorkflowRelayTool",
     "ViewHistoryTool",
+    "SkillTool",
     
     # Prompt block tools
     "WritePromptBlockTool",

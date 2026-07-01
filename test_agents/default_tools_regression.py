@@ -4,6 +4,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from heaven_base.baseheavenagent import BaseHeavenAgent
+from heaven_base.tools import SkillTool as ExportedSkillTool
 from heaven_base.tools.skill_tool import SkillTool
 from heaven_base.tools.task_system_tool import TaskSystemTool
 from heaven_base.tools.write_block_report_tool import WriteBlockReportTool
@@ -18,3 +19,7 @@ def test_resolve_tools_adds_default_tools_including_skill_tool():
     assert WriteBlockReportTool in resolved_tools
     assert TaskSystemTool in resolved_tools
     assert SkillTool in resolved_tools
+
+
+def test_skilltool_is_exported_from_heaven_base_tools():
+    assert ExportedSkillTool is SkillTool
