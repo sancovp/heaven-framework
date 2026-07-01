@@ -29,6 +29,7 @@ from .unified_chat import UnifiedChat, ProviderEnum
 from .baseheaventool import BaseHeavenTool, ToolResult, CLIResult, ToolError
 from .tools.write_block_report_tool import WriteBlockReportTool
 from .tools.task_system_tool import TaskSystemTool
+from .tools.skill_tool import SkillTool
 from abc import ABC, abstractmethod
 from .memory.history import History, AgentStatus
 from collections.abc import Callable
@@ -1091,6 +1092,9 @@ You must fix the error before proceeding."""
         # Add TaskSystemTool if not already present
         if TaskSystemTool not in resolved_tools:
             resolved_tools.append(TaskSystemTool)
+        # Add SkillTool if not already present
+        if SkillTool not in resolved_tools:
+            resolved_tools.append(SkillTool)
             
         return resolved_tools
     
@@ -4109,4 +4113,3 @@ def get_agent_by_name(agent_name: str) -> Union[BaseHeavenAgent, BaseHeavenAgent
 
     # If both approaches failed
     raise ValueError(f"Failed to load agent '{agent_name}' using either Replicant or Config approach.")
-
