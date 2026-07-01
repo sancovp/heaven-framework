@@ -77,8 +77,3 @@ def register_skill_hooks(registry: HookRegistry, agent_name: str, skillset_name:
     if skillset_name:
         registry.register(HookPoint.BEFORE_SYSTEM_PROMPT, make_skill_description_hook(skillset_name, agent_id=agent_name))
     registry.register(HookPoint.BEFORE_TOOL_CALL, make_skill_identity_hook(agent_name))
-
-    # Directory-context autoloader (supersedes claude_parity): SYSTEM-PROMPT-only (no double-pay),
-    # capped + loud-on-exceed, loads .claude AND .heaven (AGENTS.md/CLAUDE.md/rules), deduped + source-labeled.
-    from .dir_context import register_dir_context
-    register_dir_context(registry)

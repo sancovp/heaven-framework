@@ -16,6 +16,7 @@ The framework supports:
 - Uni-api for custom endpoints
 """
 from copy import deepcopy
+import hashlib
 import re
 import json
 import os
@@ -153,6 +154,49 @@ class HookRegistry:
     def run(self, point: HookPoint, ctx: HookContext):
         for fn in self._registry[point]:
             fn(ctx)
+
+
+PER_DEVDIR_FILE_CHARS = 40_000
+TOTAL_DEVDIR_CHARS = 400_000
+PER_DEVDIR_SKILL_DESC_CHARS = 600
+MAX_DEVDIR_SKILLS = 300
+_MAX_DEVDIR_WALKUP = 12
+
+
+def _file_hash(content: str) -> str:
+    return hashlib.md5(content.encode("utf-8", "ignore")).hexdigest()
+
+
+def _read_text_best_effort(path: Path) -> Optional[str]:
+    try:
+        return path.read_text()
+    except Exception:
+        return None
+
+
+def _parse_skill_summary(path: Path, content: str) -> dict:
+    name_match = re.search(r"^name:\s*(.+)$", content, re.M)
+    desc_match = re.search(r"^description:\s*(.+)$", content, re.M)
+    if name_match:
+        name = name_match.group(1).strip()
+    elif path.name == "SKILL.md":
+        name = path.parent.name
+    else:
+        name = path.stem
+    if desc_match:
+        desc = desc_match.group(1).strip()
+    else:
+        desc = next(
+            (
+                ln.strip()
+                for ln in content.splitlines()
+                if ln.strip()
+                and not ln.lstrip().startswith("#")
+                and not ln.strip().startswith("---")
+            ),
+            "",
+        )
+    return {"name": name, "description": desc[:PER_DEVDIR_SKILL_DESC_CHARS], "path": str(path)}
 
 
 def fix_ref_paths(schema: dict) -> dict:
@@ -769,6 +813,7 @@ class BaseHeavenAgent(ABC):
         ]
         self.known_config_paths = [str(path) for path in self.known_config_paths]
         self.hooks = config.hook_registry
+        self._devdir_hook_keys = set()
         # Persona resolution: if persona set, load from SkillManager and extract components
         self.carton_identity = config.carton_identity
         # Set agent context for SkillTool so it uses agent-scoped SkillManager
@@ -832,15 +877,6 @@ class BaseHeavenAgent(ABC):
         if config.skillset:
             from .hooks.default_hooks import register_skill_hooks
             register_skill_hooks(self.hooks, agent_name=config.name or "unnamed", skillset_name=config.skillset)
-        # Always-on, dep-free skill auto-load for EVERY agent (no skillset / skill_manager / carton needed):
-        # injects the AVAILABLE_SKILLS catalog (name+desc+path) into the system prompt; the agent reads the
-        # full SKILL.md on demand. The native skillset path above (make_skill_description_hook) uses
-        # skill_manager.equip/list → pulls carton_mcp; this does NOT — pure file-read + inject.
-        try:
-            from .hooks.skill_autoload import register_skill_autoload
-            register_skill_autoload(self.hooks)
-        except Exception:
-            pass
         self.max_tool_calls = max_tool_calls
         self.config = config
         self.name = config.name if config.name is not None else "unnamed_agent"
@@ -1272,6 +1308,208 @@ You must fix the error before proceeding."""
         """Convert tools to base tools for binding"""
         return [tool.base_tool if hasattr(tool, 'base_tool') else tool for tool in self.tools]
 
+    def _devdir_levels(self, start: Optional[Union[str, Path]] = None) -> list[Path]:
+        """Return ancestor dirs from repo/root to cwd so nearer dirs refine later."""
+        current = Path(start or os.getcwd()).expanduser()
+        try:
+            current = current.resolve()
+        except Exception:
+            current = current.absolute()
+        if current.is_file():
+            current = current.parent
+        chain = []
+        for _ in range(_MAX_DEVDIR_WALKUP):
+            chain.append(current)
+            if (current / ".git").exists() or current.parent == current:
+                break
+            current = current.parent
+        return list(reversed(chain))
+
+    def _iter_devdir_instruction_files(self, level: Path, devdir_name: str) -> list[Path]:
+        if devdir_name == ".claude":
+            files = [level / "CLAUDE.md", level / ".claude" / "CLAUDE.md"]
+            rules_dir = level / ".claude" / "rules"
+        else:
+            files = [
+                level / "AGENTS.md",
+                level / "CLAUDE.md",
+                level / ".heaven" / "AGENTS.md",
+                level / ".heaven" / "CLAUDE.md",
+            ]
+            rules_dir = level / ".heaven" / "rules"
+        if rules_dir.is_dir():
+            files.extend(sorted(rules_dir.glob("*.md")))
+        return [p for p in files if p.is_file()]
+
+    def _iter_devdir_skill_files(self, level: Path, devdir_name: str) -> list[Path]:
+        skill_dir = level / devdir_name / "skills"
+        if not skill_dir.is_dir():
+            return []
+        return sorted(skill_dir.glob("*/SKILL.md")) + sorted(skill_dir.glob("*.md"))
+
+    def _iter_devdir_hook_files(self, level: Path, devdir_name: str) -> list[Path]:
+        hooks_dir = level / devdir_name / "hooks"
+        if not hooks_dir.is_dir():
+            return []
+        return [
+            p for p in sorted(hooks_dir.glob("*.py"))
+            if not p.name.startswith(("_", "."))
+        ]
+
+    def _resolve_hook_point(self, value):
+        if isinstance(value, HookPoint):
+            return value
+        text = str(value).strip()
+        try:
+            return HookPoint(text.lower())
+        except ValueError:
+            pass
+        try:
+            return HookPoint[text.upper()]
+        except KeyError as exc:
+            raise ValueError(f"unknown HookPoint {value!r}") from exc
+
+    def _load_devdir_hook(self, path: Path):
+        modname = f"heaven_devdir_hook__{path.stem}__{_file_hash(str(path))[:10]}"
+        spec = importlib.util.spec_from_file_location(modname, str(path))
+        if spec is None or spec.loader is None:
+            raise ImportError(f"cannot load spec for {path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def _register_devdir_hook_file(self, path: Path) -> bool:
+        """Register a .claude/.heaven hook file once for this agent."""
+        if not hasattr(self, "_devdir_hook_keys"):
+            self._devdir_hook_keys = set()
+        key = str(path.resolve())
+        if key in self._devdir_hook_keys:
+            return False
+        module = self._load_devdir_hook(path)
+        if hasattr(module, "register") and callable(module.register):
+            module.register(self.hooks)
+        else:
+            fn = getattr(module, "hook", None)
+            points = getattr(module, "POINTS", None)
+            if points is None:
+                points = getattr(module, "POINT", None)
+            if not callable(fn) or points is None:
+                raise ValueError("hook needs register(registry) OR hook(ctx)+POINT/POINTS")
+            points = points if isinstance(points, (list, tuple)) else [points]
+            for point in points:
+                self.hooks.register(self._resolve_hook_point(point), fn)
+        self._devdir_hook_keys.add(key)
+        return True
+
+    def _equipped_skill_summaries(self) -> list[dict]:
+        try:
+            from skill_manager.core import SkillManager
+            manager = SkillManager(agent_id=getattr(self.config, "name", None))
+            return [
+                {
+                    "name": s.get("name", ""),
+                    "description": (s.get("description") or "")[:PER_DEVDIR_SKILL_DESC_CHARS],
+                    "path": "equipped",
+                }
+                for s in manager.list_equipped()
+            ]
+        except Exception:
+            return []
+
+    def resolve_devdirs(self, system_prompt: str, start: Optional[Union[str, Path]] = None) -> str:
+        """Resolve .claude then .heaven devdirs before the system prompt is rendered.
+
+        The resolver walks cwd ancestry root-to-nearest. At each level it gathers .claude first,
+        then .heaven, drops identical file bodies, injects rules/instructions and skill summaries,
+        and registers hook files into this agent's HookRegistry.
+        """
+        current = re.sub(r'\n*<DEVDIR_CONTEXT\b.*?</DEVDIR_CONTEXT>', '', system_prompt, flags=re.DOTALL)
+        current = re.sub(r'\n*<AVAILABLE_SKILLS>.*?</AVAILABLE_SKILLS>', '', current, flags=re.DOTALL)
+
+        seen_instruction_hashes: set[str] = set()
+        seen_skill_hashes: set[str] = set()
+        seen_hook_hashes: set[str] = set()
+        instruction_parts: list[str] = []
+        skill_summaries: list[dict] = []
+        notices: list[str] = []
+        total_chars = 0
+
+        for level in self._devdir_levels(start):
+            for devdir_name in (".claude", ".heaven"):
+                for path in self._iter_devdir_instruction_files(level, devdir_name):
+                    content = _read_text_best_effort(path)
+                    if content is None:
+                        continue
+                    digest = _file_hash(content)
+                    if digest in seen_instruction_hashes:
+                        continue
+                    seen_instruction_hashes.add(digest)
+                    if len(content) > PER_DEVDIR_FILE_CHARS:
+                        notices.append(f"{path} skipped: exceeds {PER_DEVDIR_FILE_CHARS} chars")
+                        continue
+                    if total_chars + len(content) > TOTAL_DEVDIR_CHARS:
+                        notices.append(f"{path} skipped: devdir context would exceed {TOTAL_DEVDIR_CHARS} chars")
+                        continue
+                    total_chars += len(content)
+                    instruction_parts.append(f"### [from {path}]\n{content.strip()}")
+
+                for path in self._iter_devdir_skill_files(level, devdir_name):
+                    content = _read_text_best_effort(path)
+                    if content is None:
+                        continue
+                    digest = _file_hash(content)
+                    if digest in seen_skill_hashes:
+                        continue
+                    seen_skill_hashes.add(digest)
+                    skill_summaries.append(_parse_skill_summary(path, content[:4000]))
+                    if len(skill_summaries) >= MAX_DEVDIR_SKILLS:
+                        notices.append(f"skill scan stopped at {MAX_DEVDIR_SKILLS} skills")
+                        break
+
+                for path in self._iter_devdir_hook_files(level, devdir_name):
+                    content = _read_text_best_effort(path)
+                    if content is None:
+                        continue
+                    digest = _file_hash(content)
+                    if digest in seen_hook_hashes:
+                        continue
+                    seen_hook_hashes.add(digest)
+                    try:
+                        self._register_devdir_hook_file(path)
+                    except Exception as exc:
+                        notices.append(f"{path} hook skipped: {exc}")
+
+        skill_summaries.extend(self._equipped_skill_summaries())
+
+        blocks = [current]
+        if instruction_parts or notices:
+            body = "\n\n".join(instruction_parts)
+            if notices:
+                body += "\n\n<system-reminder>\n" + "\n".join(notices) + "\n</system-reminder>"
+            blocks.append(
+                f'\n\n<DEVDIR_CONTEXT root="{os.getcwd()}">\n'
+                "Resolved devdir context. Order: .claude first, then .heaven; identical file bodies are included once.\n\n"
+                f"{body}\n</DEVDIR_CONTEXT>"
+            )
+        if skill_summaries:
+            seen_skill_names = set()
+            lines = []
+            for skill in skill_summaries:
+                key = (skill["name"], skill["path"])
+                if key in seen_skill_names:
+                    continue
+                seen_skill_names.add(key)
+                lines.append(
+                    f"- **{skill['name']}** — {skill['description']}  (full skill: read {skill['path']})"
+                )
+            blocks.append(
+                "\n\n<AVAILABLE_SKILLS>\n"
+                "Skills available to you. When one fits the task, read its full instructions and follow it:\n"
+                + "\n".join(lines)
+                + "\n</AVAILABLE_SKILLS>"
+            )
+        return "".join(blocks)
+
 
     def _fire_hook(self, point: HookPoint, **kwargs):
         """Fire all registered hooks for a given HookPoint."""
@@ -1506,6 +1744,7 @@ You must fix the error before proceeding."""
         """Refresh the system prompt if DNA has changed"""
         # Get fresh system prompt
         updated_prompt = self.config.get_system_prompt()
+        updated_prompt = self.resolve_devdirs(updated_prompt)
 
         # Fire BEFORE_SYSTEM_PROMPT hook — hooks can modify via ctx.data["system_prompt"]
         ctx = self._fire_hook(HookPoint.BEFORE_SYSTEM_PROMPT, prompt=updated_prompt)
