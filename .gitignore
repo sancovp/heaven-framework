@@ -173,4 +173,6 @@ Thumbs.db
 # Test files
 test_*.py
 *_test.py
-tests/
+
+# Real test suites under tests/ ARE tracked (T13 test floor)
+!tests/**

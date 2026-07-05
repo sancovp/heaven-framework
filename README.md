@@ -104,6 +104,7 @@ class CalculatorTool(BaseHeavenTool):
 - **UnifiedChat**: Multi-provider LLM interface
 - **HeavenEvent**: Standardized event format
 - **History**: Advanced conversation history management
+- **Chat Branching**: Fork past conversations, freeze them as reusable ChatTemplates, rehydrate templates into live histories (`heaven_base.memory.chat_branching`) — chat engineering as prompt engineering
 
 ## Development Roadmap
 
@@ -132,6 +133,7 @@ HEAVEN Base is actively evolving with a clear roadmap to become a complete agent
 - **Dynamic Composition** - Programmatically construct complex prompts
 
 ### 🔄 Context Engineering
+- ✅ **Chat Branching/Templates** - Fork conversations at any message, save as parameterized ChatTemplates, rehydrate into live histories; exports (`to_context_dict`/`to_parsed_messages`) compose with sdna's ContextEngineeringLib
 - **Weave Operations** - Extract and reorganize conversation history
 - **Inject Operations** - Add files, context, or arbitrary content to conversations
 - **Context Compression** - Manage long conversations with smart truncation

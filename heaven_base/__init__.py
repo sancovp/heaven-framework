@@ -16,7 +16,7 @@ if os.environ.get("HEAVEN_ALLOW_STDOUT") != "1":
         _original_print(*args, **kwargs)
     builtins.print = _stderr_print
 
-__version__ = "0.1.30"
+__version__ = "0.1.31"
 
 # Lazy imports — heavy deps (langchain → transformers → torch) load on first access only
 _LAZY_IMPORTS = {
@@ -66,6 +66,13 @@ _LAZY_IMPORTS.update({
     "start_chat": ".memory.conversations", "continue_chat": ".memory.conversations",
     "load_chat": ".memory.conversations", "list_chats": ".memory.conversations",
     "search_chats": ".memory.conversations", "get_latest_history": ".memory.conversations",
+    "ChatTemplate": ".memory.chat_branching",
+    "fork_history": ".memory.chat_branching", "fork_conversation": ".memory.chat_branching",
+    "fork_chat": ".memory.chat_branching",
+    "save_chat_template": ".memory.chat_branching", "get_chat_template": ".memory.chat_branching",
+    "list_chat_templates": ".memory.chat_branching", "search_chat_templates": ".memory.chat_branching",
+    "delete_chat_template": ".memory.chat_branching", "compose_chat_templates": ".memory.chat_branching",
+    "rehydrate_chat": ".memory.chat_branching",
     "RegistryTool": ".tools.registry_tool",
     "RegistryHeavenVariable": ".prompts.heaven_variable",
     "normalize_agent_name": ".utils.name_utils", "camel_to_snake": ".utils.name_utils",
