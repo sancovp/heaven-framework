@@ -8,7 +8,7 @@ langchain-google-genai==2.1.5
 langchain-groq==0.2.4
 langchain-openai==0.3.22
 litellm==1.80.0
-pydantic==2.10.6
+pydantic>=2.10.6,<3
 
 # LangGraph for workflow orchestration
 langgraph==0.2.60

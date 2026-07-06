@@ -24,10 +24,15 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
-    # google-adk / google-genai / langchain-google-genai are deliberately NOT here. ADK is dead-by-default
-    # (opt-in `create(adk=True)`, never called) and `google-adk==1.31.1` forces `pydantic>=2.12`, breaking the
-    # `pydantic==2.10.6` pin below + every downstream (sanctuary-dna, cave-harness). The Gemini (GOOGLE) provider
-    # is optional: `pip install heaven-framework[google]` (ChatGoogleGenerativeAI is imported lazily in unified_chat).
+    # google-adk / google-genai / langchain-google-genai are deliberately NOT here — ADK is dead-by-default
+    # (opt-in `create(adk=True)`, never called) and google-adk is a heavy tree. The Gemini (GOOGLE) provider is
+    # optional: `pip install heaven-framework[google]` (ChatGoogleGenerativeAI is imported lazily in unified_chat).
+    # pydantic is now a RANGE (>=2.10.6,<3), not `==2.10.6`: the old hard pin existed ONLY because
+    # ToolArgsSchema's dynamic-model DI broke on 2.11+ (a bogus `__config_class__=` create_model kwarg that
+    # pydantic silently dropped → lost extra='forbid'). That's fixed (baseheaventool uses the universal
+    # `__config__=ConfigDict(extra='forbid')`); tool-schema JSON is byte-identical on 2.10.6 AND 2.11, and a live
+    # MiniMax agent runs a tool turn under 2.11. The provider wrappers already allow pydantic <3. (v3 later needs
+    # the remaining ~6 deprecation spots cleaned: 1 class Config, 1 v1 @validator, 4 .dict().)
     "langchain-anthropic==0.3.13",
     "langchain-core==0.3.84",
     "langchain-deepseek==0.1.2",
@@ -36,7 +41,7 @@ dependencies = [
     "langchain==0.3.28",
     "langgraph==0.2.60",
     "litellm==1.80.0",
-    "pydantic==2.10.6",
+    "pydantic>=2.10.6,<3",
     "requests==2.33.1",
     "httpx==0.28.1",
     "fastmcp==2.9.0",
