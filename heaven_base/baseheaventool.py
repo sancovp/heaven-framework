@@ -18,14 +18,7 @@ from dataclasses import dataclass, fields, replace
 from typing import Any, Dict, Optional, Type, Callable, ClassVar, Literal, List, Union
 from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackManagerForToolRun
 from langchain_core.runnables import RunnableConfig
-from pydantic import BaseModel, Field, create_model, ConfigDict, VERSION
-try:
-    from pydantic import Extra  # For Pydantic 2.10.6
-except ImportError:
-    Extra = None  # For Pydantic 2.11+
-
-# Check if we're using Pydantic 2.11+ (where Extra is deprecated)
-PYDANTIC_2_11_PLUS = tuple(map(int, VERSION.split('.')[:2])) >= (2, 11)
+from pydantic import BaseModel, Field, create_model, ConfigDict
 from langchain_core.tools import BaseTool, Tool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from abc import abstractmethod, ABC
@@ -89,13 +82,13 @@ class ToolUse:
 
 
 
-if PYDANTIC_2_11_PLUS:
-    # Pydantic 2.11+ style - use ConfigDict
-    ForbidExtraConfig = ConfigDict(extra='forbid')
-else:
-    # Pydantic 2.10.6 style - use class config
-    class ForbidExtraConfig:
-        extra = Extra.forbid
+# The dynamic tool-arg models are built with extra='forbid' (→ additionalProperties:false in the
+# emitted OpenAI function schema, which strict tool-calling requires). `__config__=ConfigDict(...)`
+# is the ONE form that resolves identically across ALL pydantic 2.x (2.10 → 2.12+) and survives v3 —
+# unlike the old `Extra.forbid` class-config (deprecated, removed in v3) or the bogus
+# `__config_class__=` create_model kwarg (not a real param — pydantic silently ignores it, dropping
+# the forbid and breaking DI resolution under 2.11+). Keep the tool schema pydantic-version-AGNOSTIC.
+FORBID_EXTRA = ConfigDict(extra='forbid')
     
 
 @dataclass(kw_only=True, frozen=True)
@@ -339,14 +332,7 @@ class ToolArgsSchema(BaseModel):
             schema_fields[arg_name] = (schema_field_type, Field(**field_kwargs))
 
         model_name = f"DynamicArgsSchema_{id(arguments)}"
-        
-        # Handle both Pydantic 2.10.6 and 2.11+ syntax
-        if PYDANTIC_2_11_PLUS:
-            # Pydantic 2.11+ - use __config_class__ with ConfigDict
-            return create_model(model_name, __config_class__=ForbidExtraConfig, **schema_fields)
-        else:
-            # Pydantic 2.10.6 - use __config__ with class
-            return create_model(model_name, __config__=ForbidExtraConfig, **schema_fields)
+        return create_model(model_name, __config__=FORBID_EXTRA, **schema_fields)
     
     @classmethod
     def _create_nested_model_recursive(cls, model_name: str, arg_definition: Dict[str, Any]) -> Type[BaseModel]:
@@ -405,21 +391,7 @@ class ToolArgsSchema(BaseModel):
             )
 
         # 3) Create & return the Pydantic model for this level
-        # Handle both Pydantic 2.10.6 and 2.11+ syntax
-        if PYDANTIC_2_11_PLUS:
-            # Pydantic 2.11+ - use __config_class__ with ConfigDict
-            return create_model(
-                model_name,
-                __config_class__ = ForbidExtraConfig,
-                **schema_fields
-            )
-        else:
-            # Pydantic 2.10.6 - use __config__ with class
-            return create_model(
-                model_name,
-                __config__ = ForbidExtraConfig,
-                **schema_fields
-            )
+        return create_model(model_name, __config__=FORBID_EXTRA, **schema_fields)
    
     @classmethod
     def validate_arguments(cls, arguments: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -1215,8 +1187,7 @@ class ExampleTool(BaseHeavenTool):
 
 # This is one possible way to allow openAi provider binding to work with tools
 class StrictDict(BaseModel):
-    class Config:
-        extra = Extra.forbid
+    model_config = ConfigDict(extra='forbid')
 
 # ADK Attempt... doesnt work
 # class StrictDict(BaseModel):
