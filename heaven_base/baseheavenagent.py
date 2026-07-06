@@ -2030,9 +2030,9 @@ You must fix the error before proceeding."""
 
 
   
-    async def run(self, prompt: Optional[str] = None, notifications: Optional[bool] = False, streamlit: Optional[bool] = False, output_callback: Optional[Callable] = None, tool_output_callback: Optional[Callable] = None, heaven_main_callback: Optional[Callable] = None, use_uni_api: Optional[bool] = False):
+    async def run(self, prompt: Optional[str] = None, notifications: Optional[bool] = False, streamlit: Optional[bool] = False, output_callback: Optional[Callable] = None, tool_output_callback: Optional[Callable] = None, heaven_main_callback: Optional[Callable] = None, use_uni_api: Optional[bool] = False, images: Optional[list] = None):
         """Run the agent with a prompt.
-        
+
         Args:
             prompt: The user prompt to send to the agent
             notifications: Whether to send notifications
@@ -2041,7 +2041,10 @@ You must fix the error before proceeding."""
             tool_output_callback: Callback for tool output
             heaven_main_callback: Callback for main agent events
             use_uni_api: Whether to use uni-api instead of LangChain
-            
+            images: Optional list of user-attached images to send with the prompt as a
+                multimodal HumanMessage. Each item is a dict {"data": <base64 str>,
+                "media_type": "image/png"|"image/jpeg"|...}. LangChain path only.
+
         Returns:
             The agent's response
         """
@@ -2078,12 +2081,12 @@ You must fix the error before proceeding."""
             elif self.adk:
                 result = await self.run_adk(prompt=prompt, notifications=notifications, streamlit=streamlit, output_callback=output_callback, tool_output_callback=tool_output_callback)
             else:
-                if streamlit and output_callback and tool_output_callback: 
+                if streamlit and output_callback and tool_output_callback:
                     result = await self.streamlit_run(prompt, output_callback, tool_output_callback)
                 elif heaven_main_callback:
-                    result = await self.run_langchain(prompt, notifications, heaven_main_callback=heaven_main_callback)
+                    result = await self.run_langchain(prompt, notifications, heaven_main_callback=heaven_main_callback, images=images)
                 else:
-                    result = await self.run_langchain(prompt, notifications)
+                    result = await self.run_langchain(prompt, notifications, images=images)
 
             # --- SM cycle enforcement ---
             if (self.state_machine is not None
@@ -2102,7 +2105,38 @@ You must fix the error before proceeding."""
             return result
 
     
-    async def run_langchain(self, prompt: str = None, notifications=False, heaven_main_callback: Optional[Callable] = None):
+    def _build_human_content(self, text: Optional[str], images: Optional[list]):
+        """Build a HumanMessage `content` for a user turn.
+
+        No images → the plain string (the historical shape, unchanged). With images → a
+        multimodal content-block list `[{type:text}, <image block>...]`, formatted PER PROVIDER —
+        the SAME per-provider shapes heaven already uses for tool-result images (see run_langchain's
+        ToolMessage image branch): Anthropic = `image/source/base64`, Google = `image_url` data-URI
+        string, OpenAI-compatible = `image_url` dict. `images` is a list of dicts:
+        `{"data": <base64 str, no data: prefix>, "media_type": "image/png"|"image/jpeg"|...}`.
+        """
+        if not images:
+            return text
+        provider = getattr(self.config, "provider", None)
+        blocks = [{"type": "text", "text": text or ""}]
+        for img in images:
+            data = img.get("data") if isinstance(img, dict) else None
+            if not data:
+                continue
+            media_type = (img.get("media_type") if isinstance(img, dict) else None) or "image/png"
+            data_uri = f"data:{media_type};base64,{data}"
+            if provider == ProviderEnum.GOOGLE:
+                blocks.append({"type": "image_url", "image_url": data_uri})
+            elif provider in (ProviderEnum.OPENAI, ProviderEnum.GROQ, ProviderEnum.DEEPSEEK):
+                blocks.append({"type": "image_url", "image_url": {"url": data_uri}})
+            else:  # Anthropic + default — the native content-block image shape
+                blocks.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": media_type, "data": data},
+                })
+        return blocks
+
+    async def run_langchain(self, prompt: str = None, notifications=False, heaven_main_callback: Optional[Callable] = None, images: Optional[list] = None):
 
         self._sanitize_history()
         blocked = False
@@ -2145,7 +2179,10 @@ You must fix the error before proceeding."""
             if prompt is not None:
                 self._detect_agent_command(prompt)
                 if self.goal is None:
-                    conversation_history.append(HumanMessage(content=prompt))
+                    # Attach any user-provided images to THIS turn's HumanMessage (multimodal vision
+                    # on the user path — mirrors the tool-result image blocks below). Plain-string
+                    # otherwise, so non-image turns are byte-identical to before.
+                    conversation_history.append(HumanMessage(content=self._build_human_content(prompt, images)))
                     if heaven_main_callback:
                         heaven_main_callback(conversation_history[-1])
             if self.continuation_iterations != 0:
