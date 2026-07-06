@@ -306,7 +306,10 @@ class DuoSystemConfig(BaseModel):
     """Config for DUO Prompt Injector"""
     provider: ProviderEnum = ProviderEnum.OPENAI
     model: Optional[str] = "MiniMax-M2.5-highspeed"
-    temperature: float = Field(default=0.7)
+    # None = don't send a temperature param at all (many models — e.g. claude-opus-4-8 — 400 on
+    # ANY explicit temperature, "temperature is deprecated for this model"). Only set this if the
+    # caller actually wants a specific value.
+    temperature: Optional[float] = None
     thinking_budget: int | None = None
     system_prompt: str = r"""
 VITAL CONTEXT!!!!
@@ -367,10 +370,11 @@ You only speak in the language `NodeGraphXTN6`.
         duo_params = {
             'provider': self.provider,
             'model': self.model,
-            'temperature': self.temperature,
             'max_tokens': self.max_tokens,
             'thinking_budget': self.thinking_budget
-        } 
+        }
+        if self.temperature is not None:
+            duo_params['temperature'] = self.temperature
         return duo_params
 
 
@@ -382,7 +386,8 @@ class HeavenAgentConfig(BaseModel):
     system_prompt: str = ""
     tools: List[Union[Type[BaseHeavenTool], str, StructuredTool, BaseTool]] = Field(default_factory=list)
     provider: ProviderEnum = ProviderEnum.ANTHROPIC
-    temperature: float = Field(default=0.7)
+    # None = don't send a temperature param at all (see DuoSystemConfig.temperature for why).
+    temperature: Optional[float] = None
     max_tokens: int = 8000
     thinking_budget: int | None = None
     model: Optional[str] = "MiniMax-M2.5-highspeed"
@@ -767,14 +772,10 @@ class HeavenAgentConfig(BaseModel):
             # ADK expects a plain string ID for Gemini/Vertex
             return self.model
         # otherwise wrap in LiteLlm so ADK can speak to OpenAI/Anthropic/etc.
-        return LiteLlm(
-            model=model_str,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            drop_params=True,
-            # if LiteLlm supports additional args—passing them here too:
-            # streaming=True, request_timeout=…, etc.
-        )
+        litellm_kwargs = {"model": model_str, "max_tokens": self.max_tokens, "drop_params": True}
+        if self.temperature is not None:
+            litellm_kwargs["temperature"] = self.temperature
+        return LiteLlm(**litellm_kwargs)
 
 
 class BaseHeavenAgent(ABC):
@@ -934,10 +935,11 @@ class BaseHeavenAgent(ABC):
         model_params = {
             'provider': config.provider,
             'model': config.model,
-            'temperature': config.temperature,
             'max_tokens': config.max_tokens,
             'thinking_budget': config.thinking_budget
         }
+        if config.temperature is not None:
+            model_params['temperature'] = config.temperature
         if config.extra_model_kwargs:
             model_params.update(config.extra_model_kwargs)
         # Create chat model internally using UnifiedChat
