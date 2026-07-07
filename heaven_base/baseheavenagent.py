@@ -133,7 +133,7 @@ class HookPoint(str, Enum):
 class HookContext:
     def __init__(self, agent: Any, iteration: int = 0, prompt: str = "", response: str = "",
                  tool_name: str = "", tool_args: Optional[Dict[str, Any]] = None,
-                 tool_result: Any = None, error: Optional[Exception] = None):
+                 tool_result: Any = None, error: Optional[Exception] = None, **extra: Any):
         self.agent = agent
         self.iteration = iteration
         self.prompt = prompt
@@ -142,7 +142,10 @@ class HookContext:
         self.tool_args = tool_args or {}
         self.tool_result = tool_result
         self.error = error
-        self.data: Dict[str, Any] = {}  # allows state to pass between hooks
+        # `data` = inter-hook state AND any custom per-hook-point context passed via _fire_hook
+        # kwargs that don't match a named field (e.g. ON_BLOCK_REPORT passes block_report /
+        # block_report_md). Backward-compatible: callers passing only named args get data={}.
+        self.data: Dict[str, Any] = dict(extra)
 
 class HookRegistry:
     def __init__(self):
@@ -4261,6 +4264,16 @@ _(If there is a mismatch between this and the internally tracked task, the agent
 
         
         
+            # Notify ON_BLOCK_REPORT subscribers (triage automations / SI backlog) BEFORE cleanup.
+            # Pass the structured report_data + rendered markdown so handlers don't re-read /tmp
+            # (which is deleted just below). This is the first-class seam for reacting to a voluntary
+            # agent halt — see OM DESIGN §26.3 (block report = voluntary halt → world backlog → triage).
+            self._fire_hook(
+                HookPoint.ON_BLOCK_REPORT,
+                block_report=report_data,
+                block_report_md=md_block_report,
+            )
+
             # Cleanup
             os.remove(block_report_path)
             return md_block_report
