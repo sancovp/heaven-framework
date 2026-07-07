@@ -176,3 +176,6 @@ test_*.py
 
 # Real test suites under tests/ ARE tracked (T13 test floor)
 !tests/**
+
+__pycache__/
+*.pyc
