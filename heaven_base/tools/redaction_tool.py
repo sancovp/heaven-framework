@@ -1,7 +1,6 @@
 # redaction_tool.py
 
 import os
-import sys
 import logging
 from ..baseheaventool import BaseHeavenTool, ToolArgsSchema
 from typing import Dict, Any
@@ -9,11 +8,13 @@ from typing import Dict, Any
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Add the SEED publishing directory to path so we can import redaction_manager
-sys.path.insert(0, '/home/GOD/seed_v0_publishing')
-
+# RedactionManager is VENDORED alongside this tool (heaven_base/tools/redaction_manager.py),
+# copied from its canonical source application/seed-mcp/.../redaction_manager.py. This replaces
+# the old `sys.path.insert('/home/GOD/seed_v0_publishing')` host-path hack, which broke in any
+# container/host lacking that directory (ModuleNotFoundError logged every load).
+IMPORT_ERROR = ""
 try:
-    from redaction_manager import RedactionManager
+    from .redaction_manager import RedactionManager
 except ImportError as e:
     RedactionManager = None
     IMPORT_ERROR = str(e)
