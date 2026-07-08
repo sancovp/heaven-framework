@@ -262,13 +262,13 @@ class History(BasePiece):
             else:
                 t = m["type"]
                 if t == "SystemMessage":
-                    msgs.append(SystemMessage(content=m["content"]))
+                    msgs.append(SystemMessage(content=m["content"], additional_kwargs=m.get("additional_kwargs", {})))
                 elif t == "HumanMessage":
                     msgs.append(HumanMessage(content=m["content"], additional_kwargs=m.get("additional_kwargs", {})))
                 elif t == "AIMessage":
                     msgs.append(AIMessage(content=m["content"], additional_kwargs=m.get("additional_kwargs", {}), tool_calls=m.get("tool_calls", None)))
                 elif t == "ToolMessage":
-                    msgs.append(ToolMessage(content=m["content"], tool_call_id=m.get("tool_call_id")))
+                    msgs.append(ToolMessage(content=m["content"], tool_call_id=m.get("tool_call_id"), additional_kwargs=m.get("additional_kwargs", {})))
 
         status = AgentStatus(**data["agent_status"]) if data.get("agent_status") else None
 
