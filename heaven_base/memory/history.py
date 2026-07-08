@@ -264,7 +264,7 @@ class History(BasePiece):
                 if t == "SystemMessage":
                     msgs.append(SystemMessage(content=m["content"]))
                 elif t == "HumanMessage":
-                    msgs.append(HumanMessage(content=m["content"]))
+                    msgs.append(HumanMessage(content=m["content"], additional_kwargs=m.get("additional_kwargs", {})))
                 elif t == "AIMessage":
                     msgs.append(AIMessage(content=m["content"], additional_kwargs=m.get("additional_kwargs", {}), tool_calls=m.get("tool_calls", None)))
                 elif t == "ToolMessage":
@@ -477,7 +477,7 @@ class History(BasePiece):
                 if t == "SystemMessage":
                     langchain_messages.append(SystemMessage(content=m["content"]))
                 elif t == "HumanMessage":
-                    langchain_messages.append(HumanMessage(content=m["content"]))
+                    langchain_messages.append(HumanMessage(content=m["content"], additional_kwargs=m.get("additional_kwargs", {})))
                 elif t == "AIMessage":
                     langchain_messages.append(AIMessage(content=m["content"], additional_kwargs=m.get("additional_kwargs", {}), tool_calls=m.get("tool_calls", None)))
                 elif t == "ToolMessage":

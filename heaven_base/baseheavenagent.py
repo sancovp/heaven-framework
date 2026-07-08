@@ -119,6 +119,23 @@ def convert_adk_event_to_ai_messages(ev) -> list[BaseMessage | ToolResult]:
     return messages
 
 
+def _stamp_ts(msg):
+    """Stamp a per-message HAPPEN-time into additional_kwargs and return the message.
+
+    LangChain message objects carry NO native timestamp — the only way to record when a message
+    happened is `additional_kwargs`. We stamp it here (at receipt/creation), History round-trips
+    additional_kwargs for free (see memory/history.py), and downstream (carton/HS) keys the stable
+    datetime identity `Iteration_{format_ts(timestamp)}` off it. `setdefault` never overwrites an
+    existing stamp; any failure is swallowed so message flow is never affected."""
+    try:
+        ak = getattr(msg, "additional_kwargs", None)
+        if isinstance(ak, dict):
+            ak.setdefault("timestamp", datetime.now().isoformat())
+    except Exception:
+        pass
+    return msg
+
+
 class HookPoint(str, Enum):
     BEFORE_RUN = "before_run"
     AFTER_RUN = "after_run"
@@ -1848,7 +1865,7 @@ You must fix the error before proceeding."""
     
             elif getattr(part, "thought", None):
                 block = {"type": "thinking", "thinking": part.thought}
-                am = AIMessage(content=[block])
+                am = _stamp_ts(AIMessage(content=[block]))
                 if output_callback:
                     output_callback(am)
                 self.history.messages.append(am)
@@ -1860,14 +1877,14 @@ You must fix the error before proceeding."""
                     "name": part.function_call.name,
                     "input": part.function_call.args,
                 }
-                am = AIMessage(content=[block])
+                am = _stamp_ts(AIMessage(content=[block]))
                 if output_callback:
                     output_callback(am)
                 self.history.messages.append(am)
     
             elif getattr(part, "text", None):
                 block = {"type": "text", "text": part.text}
-                am = AIMessage(content=[block])
+                am = _stamp_ts(AIMessage(content=[block]))
                 if output_callback:
                     output_callback(am)
                 self.history.messages.append(am)
@@ -2187,7 +2204,7 @@ You must fix the error before proceeding."""
                     # Attach any user-provided images to THIS turn's HumanMessage (multimodal vision
                     # on the user path — mirrors the tool-result image blocks below). Plain-string
                     # otherwise, so non-image turns are byte-identical to before.
-                    conversation_history.append(HumanMessage(content=self._build_human_content(prompt, images)))
+                    conversation_history.append(_stamp_ts(HumanMessage(content=self._build_human_content(prompt, images))))
                     if heaven_main_callback:
                         heaven_main_callback(conversation_history[-1])
             if self.continuation_iterations != 0:
@@ -2221,7 +2238,7 @@ You must fix the error before proceeding."""
                 # next_prompt = self._format_agent_prompt() if self.goal else conversation_history[-1].content
                 next_prompt = self._format_agent_prompt() if (self.goal or self.continuation_prompt) else conversation_history[-1].content
                 if self.goal or self.continuation_prompt:  # Add formatted prompt in agent mode or continuation
-                    conversation_history.append(HumanMessage(content=next_prompt))
+                    conversation_history.append(_stamp_ts(HumanMessage(content=next_prompt)))
                     if heaven_main_callback:
                         heaven_main_callback(conversation_history[-1])
                 # if self.goal:  # Only add formatted prompt in agent mode
@@ -2269,7 +2286,7 @@ You must fix the error before proceeding."""
                 conversation_history = await self._maybe_compact(conversation_history)
 
                 # Invoke model for a response
-                response = await self.chat_model.ainvoke(conversation_history)
+                response = _stamp_ts(await self.chat_model.ainvoke(conversation_history))
                 if heaven_main_callback:
                     heaven_main_callback(response)
 
@@ -2350,7 +2367,7 @@ You must fix the error before proceeding."""
                     tool_call_count += 1  # count against limit to prevent infinite nudge loop
                     # Re-invoke the model with the nudge
                     conversation_history = await self._maybe_compact(conversation_history)
-                    current_response = await self.chat_model.ainvoke(conversation_history)
+                    current_response = _stamp_ts(await self.chat_model.ainvoke(conversation_history))
                     conversation_history.append(current_response)
                     if heaven_main_callback:
                         heaven_main_callback(current_response)
@@ -2500,7 +2517,7 @@ You must fix the error before proceeding."""
 
                     # Call API again — get next response
                     conversation_history = await self._maybe_compact(conversation_history)
-                    current_response = await self.chat_model.ainvoke(conversation_history)
+                    current_response = _stamp_ts(await self.chat_model.ainvoke(conversation_history))
                     conversation_history.append(current_response)
                     if heaven_main_callback:
                         heaven_main_callback(current_response)
@@ -2667,7 +2684,7 @@ You must fix the error before proceeding."""
                 # In agent mode, format with goals/tasks
                 next_prompt = self._format_agent_prompt() if self.goal else conversation_history[-1].content
                 if self.goal:  # Only add formatted prompt in agent mode
-                    conversation_history.append(HumanMessage(content=next_prompt))
+                    conversation_history.append(_stamp_ts(HumanMessage(content=next_prompt)))
                     ###### Add output callback here
                     
                     # output_callback(HumanMessage(content=next_prompt)) # this might not be needed, commenting out for now
@@ -2713,7 +2730,7 @@ You must fix the error before proceeding."""
                 # Invoke model for a response
                 # logger = logging.getLogger(__name__)
                 # logger.error("==== Conversation_History %s", conversation_history)
-                response = await self.chat_model.ainvoke(conversation_history)
+                response = _stamp_ts(await self.chat_model.ainvoke(conversation_history))
                 ###### Add output callback here
                 # with open('/_tmp_streamlit_debug.log', 'a') as f:
                 #     f.write(f"\nLangchain response: {response}")
@@ -3010,7 +3027,7 @@ You must fix the error before proceeding."""
                                 # with open(tool_log_path, 'a') as f:
                                     f.write(f"\nAI should be called next...\n")
                                     f.write(f"Coversation_History:\n    {conversation_history}\n")
-                                result_response = await self.chat_model.ainvoke(conversation_history)
+                                result_response = _stamp_ts(await self.chat_model.ainvoke(conversation_history))
                                 
                                 sys_msg_idx = next(i for i, msg in enumerate(conversation_history) if isinstance(msg, SystemMessage))
                                 conversation_history[sys_msg_idx] = SystemMessage(content=self.config.system_prompt)
