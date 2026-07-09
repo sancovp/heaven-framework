@@ -219,6 +219,16 @@ def _extract_tool_path(tool_name: str, tool_args: Optional[dict]) -> Optional[st
     return None
 
 
+def _dir_has_devdir(d: Path) -> bool:
+    """True if `d` carries any devdir marker: a `.claude/` or `.heaven/` dir, or a root CLAUDE.md/AGENTS.md.
+    This is the devdir-chain walk boundary — climb while the PARENT has one, stop when it does not."""
+    try:
+        return ((d / ".claude").is_dir() or (d / ".heaven").is_dir()
+                or (d / "CLAUDE.md").is_file() or (d / "AGENTS.md").is_file())
+    except Exception:
+        return False
+
+
 def _parse_skill_summary(path: Path, content: str) -> dict:
     name_match = re.search(r"^name:\s*(.+)$", content, re.M)
     desc_match = re.search(r"^description:\s*(.+)$", content, re.M)
@@ -1370,7 +1380,15 @@ You must fix the error before proceeding."""
         return [tool.base_tool if hasattr(tool, 'base_tool') else tool for tool in self.tools]
 
     def _devdir_levels(self, start: Optional[Union[str, Path]] = None) -> list[Path]:
-        """Return ancestor dirs from repo/root to cwd so nearer dirs refine later."""
+        """Return the devdir-bearing ancestor dirs that apply to `start`, root-first (nearest refines
+        last). Two phases (Isaac 2026-07-09; NOT bounded by `.git` — that stop was wrong):
+          1. ENTER: from `start` (or cwd), climb to the NEAREST ancestor that HAS a devdir (`_dir_has_devdir`
+             = .claude/.heaven/ or CLAUDE.md/AGENTS.md) — skipping a leading run of non-devdir dirs, so an
+             agent working DEEP in a repo whose .claude lives only at the root still reaches the root.
+          2. CLIMB: from that entry, keep going up while the PARENT also has a devdir; STOP at the first
+             parent with NO devdir (a gap ABOVE the entry ends the chain — we do not jump over it).
+        `_MAX_DEVDIR_WALKUP` caps each phase. (Persona overrides `force`/`absolute` would widen the phase-2
+        boundary — not wired yet.) If no devdir exists anywhere up the chain, returns just `start`."""
         current = Path(start or os.getcwd()).expanduser()
         try:
             current = current.resolve()
@@ -1378,12 +1396,27 @@ You must fix the error before proceeding."""
             current = current.absolute()
         if current.is_file():
             current = current.parent
-        chain = []
+        # Phase 1 — climb to the nearest devdir-bearing ancestor (the entry onto the chain).
+        entry = None
+        probe = current
         for _ in range(_MAX_DEVDIR_WALKUP):
-            chain.append(current)
-            if (current / ".git").exists() or current.parent == current:
+            if _dir_has_devdir(probe):
+                entry = probe
                 break
-            current = current.parent
+            if probe.parent == probe:
+                break
+            probe = probe.parent
+        if entry is None:
+            return [current]
+        # Phase 2 — from the entry, climb the CONTIGUOUS chain while each parent has a devdir.
+        chain = [entry]
+        cur = entry
+        for _ in range(_MAX_DEVDIR_WALKUP):
+            parent = cur.parent
+            if parent == cur or not _dir_has_devdir(parent):
+                break
+            chain.append(parent)
+            cur = parent
         return list(reversed(chain))
 
     def _iter_devdir_instruction_files(self, level: Path, devdir_name: str) -> list[Path]:

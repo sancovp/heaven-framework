@@ -55,6 +55,38 @@ def test_no_active_dir_falls_back_to_configured_cwd_only(tmp_path, monkeypatch):
     assert "RULE BODY FOR SOLO" in resolved
 
 
+# ---- the walk boundary: phase-1 (skip leading gap) + phase-2 (gap above entry stops); NOT .git-bounded ----
+
+def test_deep_agent_reaches_root_devdir_across_leading_gap(tmp_path, monkeypatch):
+    # repo has .claude ONLY at the root; agent works 2 levels deep with no .claude in between.
+    # Phase 1 must climb PAST the non-devdir dirs to the repo-root .claude (the old .git-walk did this;
+    # a strict "stop at first parent without a devdir" would wrongly return nothing).
+    repo = _mk_repo(tmp_path / "repo", "ROOT")
+    feature = repo / "pkg" / "feature"; feature.mkdir(parents=True)
+    resolved = _agent(monkeypatch, configured_cwd=tmp_path / "elsewhere", active=feature).resolve_devdirs("BASE")
+    assert "RULE BODY FOR ROOT" in resolved, "deep agent in a root-only-.claude repo still gets the root rules"
+
+
+def test_nested_contiguous_devdirs_all_load(tmp_path, monkeypatch):
+    root = _mk_repo(tmp_path / "r", "R_TOP")
+    mid = _mk_repo(root / "mid", "R_MID")
+    leaf = _mk_repo(mid / "leaf", "R_LEAF")
+    resolved = _agent(monkeypatch, configured_cwd=tmp_path / "home", active=leaf).resolve_devdirs("BASE")
+    for m in ("R_TOP", "R_MID", "R_LEAF"):
+        assert f"RULE BODY FOR {m}" in resolved, f"{m} in the contiguous chain must load"
+
+
+def test_gap_above_entry_stops_the_chain(tmp_path, monkeypatch):
+    # top/.claude(TOP) -> top/gap (NO devdir) -> top/gap/leaf/.claude(LEAF); agent at leaf.
+    # entry = leaf; its parent 'gap' has no devdir -> STOP. TOP is above the gap and must NOT load.
+    _mk_repo(tmp_path / "top", "TOP")
+    gap = tmp_path / "top" / "gap"; gap.mkdir()
+    leaf = _mk_repo(gap / "leaf", "LEAF")
+    resolved = _agent(monkeypatch, configured_cwd=tmp_path / "home", active=leaf).resolve_devdirs("BASE")
+    assert "RULE BODY FOR LEAF" in resolved
+    assert "RULE BODY FOR TOP" not in resolved, "a gap ABOVE the entry ends the chain -> TOP not loaded"
+
+
 # ---- the tracker: READ + BASH set the current dir, and it SWAPS on move (leave → gone) ----
 
 def _bare_agent():
