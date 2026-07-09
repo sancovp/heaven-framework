@@ -16,7 +16,17 @@ if os.environ.get("HEAVEN_ALLOW_STDOUT") != "1":
         _original_print(*args, **kwargs)
     builtins.print = _stderr_print
 
-__version__ = "0.1.32"
+# Read the version from installed package metadata (pyproject) so it can NEVER drift from the real
+# release the way a hardcoded string did (it sat at 0.1.32 through several pyproject bumps). Falls back
+# to the current pyproject version only when metadata is unavailable (e.g. running from raw source).
+try:
+    from importlib.metadata import version as _pkg_version, PackageNotFoundError as _PkgNotFound
+    try:
+        __version__ = _pkg_version("heaven-framework")
+    except _PkgNotFound:
+        __version__ = "0.1.33"
+except Exception:
+    __version__ = "0.1.33"
 
 # Lazy imports — heavy deps (langchain → transformers → torch) load on first access only
 _LAZY_IMPORTS = {
