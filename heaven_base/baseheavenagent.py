@@ -194,6 +194,31 @@ def _read_text_best_effort(path: Path) -> Optional[str]:
         return None
 
 
+_ACTIVE_DIR_PATH_KEYS = ("path", "file_path", "filename", "file", "directory", "cwd")
+
+
+def _extract_tool_path(tool_name: str, tool_args: Optional[dict]) -> Optional[str]:
+    """Pull a filesystem path out of a tool's args (or a bash command string).
+
+    Mirrors heaven_base/hooks/dir_context.py:_extract_path_from_tool. Defined HERE rather than imported
+    because dir_context imports FROM this module (circular otherwise). Used by the AFTER_TOOL_CALL tracker
+    so resolve_devdirs can load the devdir rules of the dirs an agent actually READS / BASHES into — not
+    just its launch cwd (an agent's process cwd is fixed at launch; where it "is" == what it reads/bashes).
+    """
+    tool_args = tool_args or {}
+    tool_name = (tool_name or "").lower()
+    for key in _ACTIVE_DIR_PATH_KEYS:
+        val = tool_args.get(key)
+        if val and isinstance(val, str) and val.startswith("/"):
+            return val
+    if "bash" in tool_name:
+        command = tool_args.get("command", "") or ""
+        for m in re.findall(r'(/[^\s;|&"\']+)', command):
+            if os.path.exists(m) or os.path.exists(os.path.dirname(m)):
+                return m
+    return None
+
+
 def _parse_skill_summary(path: Path, content: str) -> dict:
     name_match = re.search(r"^name:\s*(.+)$", content, re.M)
     desc_match = re.search(r"^description:\s*(.+)$", content, re.M)
@@ -434,6 +459,11 @@ class HeavenAgentConfig(BaseModel):
     persona: Optional[str] = None  # Persona name — resolves frame, skillset, mcp_set, carton_identity
     mcp_set: Optional[str] = None  # Strata MCP set name (resolved from persona or set directly)
     carton_identity: Optional[str] = None  # CartON identity for observations
+    working_dir: Optional[str] = None  # Explicit STARTING working dir for devdir resolution (which
+                                       # .claude/.heaven rules load into the system prompt). None →
+                                       # falls back to os.getcwd(). The agent ALSO tracks the dirs it
+                                       # reads/bashes into (BaseHeavenAgent._active_work_dirs), so devdir
+                                       # context = this dir's rules AND the worked-in dirs' rules.
     state_machine: Optional[Any] = None  # KeywordBasedStateMachine instance
     min_sm_cycles: Optional[int] = None  # Minimum complete SM cycles before agent can stop
     enable_compaction: bool = False  # Enable auto-compaction when transcript exceeds threshold
@@ -835,6 +865,11 @@ class BaseHeavenAgent(ABC):
         self.known_config_paths = [str(path) for path in self.known_config_paths]
         self.hooks = config.hook_registry
         self._devdir_hook_keys = set()
+        # Devdir roots: the explicit STARTING dir (config.working_dir, else the launch cwd) PLUS the dirs
+        # the agent actually reads/bashes into (tracked by _track_active_work_dir below). resolve_devdirs
+        # walks ALL of them, so an agent loads BOTH its own AIOS rules AND the rules of the repo it works in.
+        self._configured_cwd = config.working_dir or os.getcwd()
+        self._active_work_dirs: list[str] = []
         # Persona resolution: if persona set, load from SkillManager and extract components
         self.carton_identity = config.carton_identity
         # Set agent context for SkillTool so it uses agent-scoped SkillManager
@@ -898,6 +933,9 @@ class BaseHeavenAgent(ABC):
         if config.skillset:
             from .hooks.default_hooks import register_skill_hooks
             register_skill_hooks(self.hooks, agent_name=config.name or "unnamed", skillset_name=config.skillset)
+        # Track the dirs the agent READS/BASHES into so resolve_devdirs loads THEIR .claude/.heaven rules
+        # (not just the launch cwd). This is the "tracked thru READ and BASH" half of devdir resolution.
+        self.hooks.register(HookPoint.AFTER_TOOL_CALL, self._track_active_work_dir)
         self.max_tool_calls = max_tool_calls
         self.config = config
         self.name = config.name if config.name is not None else "unnamed_agent"
@@ -1438,12 +1476,60 @@ You must fix the error before proceeding."""
         except Exception:
             return []
 
+    _MAX_ACTIVE_WORK_DIRS = 8
+
+    def _track_active_work_dir(self, ctx) -> None:
+        """AFTER_TOOL_CALL hook: record the dir a Read/Bash touched so resolve_devdirs loads its rules.
+
+        Newest-refines: the most recently touched dir is moved to the END (so its rules refine earlier
+        ones). Capped at _MAX_ACTIVE_WORK_DIRS (oldest dropped). Best-effort — NEVER raises (a tracking
+        failure must not break a run)."""
+        try:
+            path = _extract_tool_path(getattr(ctx, "tool_name", ""), getattr(ctx, "tool_args", None))
+            if not path:
+                return
+            d = path if os.path.isdir(path) else os.path.dirname(path)
+            if not d or not os.path.isdir(d):
+                return
+            dirs = self._active_work_dirs
+            if d in dirs:
+                dirs.remove(d)  # move to end → newest-refines
+            dirs.append(d)
+            if len(dirs) > self._MAX_ACTIVE_WORK_DIRS:
+                del dirs[0]
+        except Exception:
+            pass
+
+    def _resolve_devdir_roots(self, start: Optional[Union[str, Path]] = None) -> list[Path]:
+        """Ordered, de-duped dir LEVELS to load devdir context from: the configured/launch cwd's ancestry
+        PLUS the ancestry of every dir the agent has read/bashed into (newest-refines) PLUS an explicit
+        `start` if a caller passes one. `getattr` defaults keep this safe for object.__new__ test agents
+        that never ran __init__."""
+        roots: list[str] = [getattr(self, "_configured_cwd", None) or os.getcwd()]
+        for d in getattr(self, "_active_work_dirs", []):
+            if d not in roots:
+                roots.append(d)
+        if start is not None and str(start) not in roots:
+            roots.append(str(start))
+        levels: list[Path] = []
+        seen: set[str] = set()
+        for root in roots:
+            for level in self._devdir_levels(root):
+                key = str(level)
+                if key in seen:
+                    continue
+                seen.add(key)
+                levels.append(level)
+        return levels
+
     def resolve_devdirs(self, system_prompt: str, start: Optional[Union[str, Path]] = None) -> str:
         """Resolve .claude then .heaven devdirs before the system prompt is rendered.
 
-        The resolver walks cwd ancestry root-to-nearest. At each level it gathers .claude first,
-        then .heaven, drops identical file bodies, injects rules/instructions and skill summaries,
-        and registers hook files into this agent's HookRegistry.
+        Walks MULTIPLE roots (via _resolve_devdir_roots): the configured/launch cwd's ancestry AND the
+        ancestry of every dir the agent has READ/BASHED into (so it loads both its own AIOS rules and the
+        rules of the repo it is working in). At each level it gathers .claude first, then .heaven, drops
+        identical file bodies, injects rules/instructions and skill summaries, and registers hook files
+        into this agent's HookRegistry.
         """
         current = re.sub(r'\n*<DEVDIR_CONTEXT\b.*?</DEVDIR_CONTEXT>', '', system_prompt, flags=re.DOTALL)
         current = re.sub(r'\n*<AVAILABLE_SKILLS>.*?</AVAILABLE_SKILLS>', '', current, flags=re.DOTALL)
@@ -1456,7 +1542,7 @@ You must fix the error before proceeding."""
         notices: list[str] = []
         total_chars = 0
 
-        for level in self._devdir_levels(start):
+        for level in self._resolve_devdir_roots(start):
             for devdir_name in (".claude", ".heaven"):
                 for path in self._iter_devdir_instruction_files(level, devdir_name):
                     content = _read_text_best_effort(path)
@@ -1503,14 +1589,17 @@ You must fix the error before proceeding."""
 
         skill_summaries.extend(self._equipped_skill_summaries())
 
+        devdir_roots_label = ", ".join(dict.fromkeys(
+            [getattr(self, "_configured_cwd", None) or os.getcwd()] + list(getattr(self, "_active_work_dirs", []))
+        ))
         blocks = [current]
         if instruction_parts or notices:
             body = "\n\n".join(instruction_parts)
             if notices:
                 body += "\n\n<system-reminder>\n" + "\n".join(notices) + "\n</system-reminder>"
             blocks.append(
-                f'\n\n<DEVDIR_CONTEXT root="{os.getcwd()}">\n'
-                "Resolved devdir context. Order: .claude first, then .heaven; identical file bodies are included once.\n\n"
+                f'\n\n<DEVDIR_CONTEXT roots="{devdir_roots_label}">\n'
+                "Resolved devdir context (starting dir + dirs read/bashed into). Order: .claude first, then .heaven; identical file bodies are included once.\n\n"
                 f"{body}\n</DEVDIR_CONTEXT>"
             )
         if skill_summaries:
