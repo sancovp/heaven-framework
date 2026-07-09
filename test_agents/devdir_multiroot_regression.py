@@ -5,7 +5,9 @@ that dir. Fixes devdir loading being keyed only to os.getcwd() (the launch dir, 
 from pathlib import Path
 from types import SimpleNamespace
 
-from heaven_base.baseheavenagent import BaseHeavenAgent, HookRegistry, _extract_tool_path
+from heaven_base.baseheavenagent import (
+    BaseHeavenAgent, HookRegistry, _extract_tool_path, _scan_persona_directive,
+)
 
 
 def _agent(monkeypatch, configured_cwd=None, active=None):
@@ -152,3 +154,63 @@ def test_extract_tool_path_helper(tmp_path):
     assert _extract_tool_path("BashTool", {"command": f"git -C {tmp_path} status"}) == str(tmp_path)
     assert _extract_tool_path("BashTool", {"command": "ls"}) is None
     assert _extract_tool_path("SomeTool", {"note": "no path here"}) is None
+
+
+# ---- persona declarations: skillmanager_persona= (FORCE, sticky, composes) / absolute_ (ignores parents) ----
+
+def test_scan_persona_directive_force():
+    assert _scan_persona_directive("blah\nskillmanager_persona=Gnosys\nmore") == ("Gnosys", False)
+
+
+def test_scan_persona_directive_absolute_wins_over_the_force_substring_inside_it():
+    # absolute_skillmanager_persona= literally CONTAINS skillmanager_persona= — absolute must still win,
+    # and the plain FORCE regex must NOT match the absolute form (fixed-width negative lookbehind).
+    assert _scan_persona_directive("absolute_skillmanager_persona=Isolated") == ("Isolated", True)
+
+
+def test_scan_persona_directive_none():
+    assert _scan_persona_directive("nothing to see") is None
+    assert _scan_persona_directive("") is None
+    assert _scan_persona_directive(None) is None
+
+
+def test_forced_persona_is_STICKY_and_not_lost_when_the_agent_moves(tmp_path, monkeypatch):
+    # dir A's CLAUDE.md declares a persona; after resolving there, moving to dir B (no declaration) KEEPS
+    # the forced persona — the defining property: a forced persona does NOT get lost when the agent moves.
+    a = _mk_repo(tmp_path / "declares", "A_RULE")
+    (a / "CLAUDE.md").write_text("skillmanager_persona=Gnosys\n")
+    b = _mk_repo(tmp_path / "plain", "B_RULE")
+    agent = _agent(monkeypatch, configured_cwd=tmp_path / "home", active=a)
+    agent.resolve_devdirs("BASE")
+    assert agent._forced_persona == "Gnosys"
+    assert agent._forced_persona_absolute is False
+    # move to B — no declaration there — the persona must PERSIST
+    agent._active_work_dir = str(b)
+    agent.resolve_devdirs("BASE")
+    assert agent._forced_persona == "Gnosys", "forced persona must NOT be lost when the agent moves"
+
+
+def test_absolute_persona_IGNORES_PARENTS_suppressing_ambient_devdir_rules(tmp_path, monkeypatch):
+    # leaf declares an ABSOLUTE persona; the parent chain's rules (and the leaf's own ambient rules) must
+    # be SUPPRESSED — absolute = "only this persona, ignore all ambient/parent devdir context".
+    root = _mk_repo(tmp_path / "r", "ROOT_RULE")
+    leaf = _mk_repo(root / "leaf", "LEAF_RULE")
+    (leaf / "CLAUDE.md").write_text("absolute_skillmanager_persona=Isolated\n")
+    agent = _agent(monkeypatch, configured_cwd=tmp_path / "home", active=leaf)
+    resolved = agent.resolve_devdirs("BASE")
+    assert agent._forced_persona == "Isolated" and agent._forced_persona_absolute is True
+    assert "RULE BODY FOR ROOT_RULE" not in resolved, "absolute persona ignores PARENT rules"
+    assert "RULE BODY FOR LEAF_RULE" not in resolved, "absolute persona suppresses ALL ambient devdir rules"
+    assert resolved.startswith("BASE"), "base prompt preserved"
+
+
+def test_force_persona_COMPOSES_with_parent_rules(tmp_path, monkeypatch):
+    # a plain FORCE persona is sticky but STILL composes with the ambient parent devdir rules.
+    root = _mk_repo(tmp_path / "r2", "ROOT2_RULE")
+    leaf = _mk_repo(root / "leaf2", "LEAF2_RULE")
+    (leaf / "CLAUDE.md").write_text("skillmanager_persona=Composed\n")
+    agent = _agent(monkeypatch, configured_cwd=tmp_path / "home", active=leaf)
+    resolved = agent.resolve_devdirs("BASE")
+    assert agent._forced_persona == "Composed" and agent._forced_persona_absolute is False
+    assert "RULE BODY FOR ROOT2_RULE" in resolved, "force persona still loads parent rules"
+    assert "RULE BODY FOR LEAF2_RULE" in resolved, "force persona still loads the current dir's rules"

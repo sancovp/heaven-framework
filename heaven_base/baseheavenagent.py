@@ -200,10 +200,11 @@ _ACTIVE_DIR_PATH_KEYS = ("path", "file_path", "filename", "file", "directory", "
 def _extract_tool_path(tool_name: str, tool_args: Optional[dict]) -> Optional[str]:
     """Pull a filesystem path out of a tool's args (or a bash command string).
 
-    Mirrors heaven_base/hooks/dir_context.py:_extract_path_from_tool. Defined HERE rather than imported
-    because dir_context imports FROM this module (circular otherwise). Used by the AFTER_TOOL_CALL tracker
-    so resolve_devdirs can load the devdir rules of the dirs an agent actually READS / BASHES into — not
-    just its launch cwd (an agent's process cwd is fixed at launch; where it "is" == what it reads/bashes).
+    Used by the AFTER_TOOL_CALL tracker (_track_active_work_dir) so resolve_devdirs can load the devdir
+    rules of the dirs an agent actually READS / BASHES into — not just its launch cwd (an agent's process
+    cwd is fixed at launch; where it "is" == what it reads/bashes). This is the ONE native devdir loader in
+    heaven; the old standalone hooks/dir_context.py hook was retired (it duplicated this and had to be
+    manually wired).
     """
     tool_args = tool_args or {}
     tool_name = (tool_name or "").lower()
@@ -227,6 +228,28 @@ def _dir_has_devdir(d: Path) -> bool:
                 or (d / "CLAUDE.md").is_file() or (d / "AGENTS.md").is_file())
     except Exception:
         return False
+
+
+# Persona declaration directives — a persona FORCED via a line in ANY loaded instruction surface (a
+# CLAUDE.md, an AGENTS.md, or the heaven system prompt itself). absolute_ is checked FIRST because its
+# literal contains "skillmanager_persona=" as a substring; the fixed-width negative lookbehind keeps the
+# plain FORCE regex from also matching the absolute form.
+_PERSONA_ABS_RE = re.compile(r'absolute_skillmanager_persona=([A-Za-z0-9_.\-]+)')
+_PERSONA_FORCE_RE = re.compile(r'(?<!absolute_)skillmanager_persona=([A-Za-z0-9_.\-]+)')
+
+
+def _scan_persona_directive(text: Optional[str]):
+    """Scan text for a persona declaration. Returns (persona_name, is_absolute) or None.
+    absolute_skillmanager_persona= wins over skillmanager_persona= when both are present."""
+    if not text:
+        return None
+    m = _PERSONA_ABS_RE.search(text)
+    if m:
+        return (m.group(1), True)
+    m = _PERSONA_FORCE_RE.search(text)
+    if m:
+        return (m.group(1), False)
+    return None
 
 
 def _parse_skill_summary(path: Path, content: str) -> dict:
@@ -881,6 +904,13 @@ class BaseHeavenAgent(ABC):
         # walks both, so an agent loads its own AIOS rules AND the rules of the dir it is currently in.
         self._configured_cwd = config.working_dir or os.getcwd()
         self._active_work_dir: Optional[str] = None
+        # Forced persona (skillmanager_persona= / absolute_skillmanager_persona= declared in ANY loaded
+        # surface). UNLIKE the swapping _active_work_dir above, this is STICKY: once a declaration is seen it
+        # is set and NEVER cleared on move, so a forced persona does NOT get lost when the agent moves.
+        # _forced_persona_absolute → the persona IGNORES PARENTS (resolve_devdirs suppresses the ambient
+        # devdir walk entirely; only the persona applies).
+        self._forced_persona: Optional[str] = None
+        self._forced_persona_absolute: bool = False
         # Persona resolution: if persona set, load from SkillManager and extract components
         self.carton_identity = config.carton_identity
         # Set agent context for SkillTool so it uses agent-scoped SkillManager
@@ -1560,6 +1590,14 @@ You must fix the error before proceeding."""
         """
         current = re.sub(r'\n*<DEVDIR_CONTEXT\b.*?</DEVDIR_CONTEXT>', '', system_prompt, flags=re.DOTALL)
         current = re.sub(r'\n*<AVAILABLE_SKILLS>.*?</AVAILABLE_SKILLS>', '', current, flags=re.DOTALL)
+        current = re.sub(r'\n*<PERSONA_FRAME\b.*?</PERSONA_FRAME>', '', current, flags=re.DOTALL)
+
+        # Persona-declaration scan (STICKY): a persona forced via skillmanager_persona= /
+        # absolute_skillmanager_persona= in ANY surface is set ONCE and never cleared on move, so it does not
+        # get lost when the agent moves. Scan the base prompt now; each loaded devdir file is scanned below.
+        _pd = _scan_persona_directive(current)
+        if _pd:
+            self._forced_persona, self._forced_persona_absolute = _pd
 
         seen_instruction_hashes: set[str] = set()
         seen_skill_hashes: set[str] = set()
@@ -1575,6 +1613,9 @@ You must fix the error before proceeding."""
                     content = _read_text_best_effort(path)
                     if content is None:
                         continue
+                    _pd = _scan_persona_directive(content)   # sticky: a declaration in any surface forces it
+                    if _pd:
+                        self._forced_persona, self._forced_persona_absolute = _pd
                     digest = _file_hash(content)
                     if digest in seen_instruction_hashes:
                         continue
@@ -1616,11 +1657,16 @@ You must fix the error before proceeding."""
 
         skill_summaries.extend(self._equipped_skill_summaries())
 
+        # ABSOLUTE persona IGNORES PARENTS: suppress the ambient devdir walk entirely (only the persona
+        # frame applies). A plain FORCE persona still COMPOSES with the ambient rules below.
+        emit_ambient = not getattr(self, "_forced_persona_absolute", False)
+
+        _active = getattr(self, "_active_work_dir", None)
         devdir_roots_label = ", ".join(dict.fromkeys(
-            [getattr(self, "_configured_cwd", None) or os.getcwd()] + list(getattr(self, "_active_work_dirs", []))
+            [getattr(self, "_configured_cwd", None) or os.getcwd()] + ([_active] if _active else [])
         ))
         blocks = [current]
-        if instruction_parts or notices:
+        if emit_ambient and (instruction_parts or notices):
             body = "\n\n".join(instruction_parts)
             if notices:
                 body += "\n\n<system-reminder>\n" + "\n".join(notices) + "\n</system-reminder>"
@@ -1629,7 +1675,7 @@ You must fix the error before proceeding."""
                 "Resolved devdir context (starting dir + dirs read/bashed into). Order: .claude first, then .heaven; identical file bodies are included once.\n\n"
                 f"{body}\n</DEVDIR_CONTEXT>"
             )
-        if skill_summaries:
+        if emit_ambient and skill_summaries:
             seen_skill_names = set()
             lines = []
             for skill in skill_summaries:
@@ -1646,7 +1692,30 @@ You must fix the error before proceeding."""
                 + "\n".join(lines)
                 + "\n</AVAILABLE_SKILLS>"
             )
-        return "".join(blocks)
+        result = "".join(blocks)
+
+        # Apply the STICKY forced persona: its FRAME overrides (prepends) the system prompt; its skillset
+        # and carton collection become the agent's skillset + carton identity. SkillManager is only the
+        # STORE the persona is read from (get_persona = a read, not the manual equip ceremony). Wrapped in a
+        # <PERSONA_FRAME> marker (stripped at the top of this method) so it never doubles across turns.
+        forced = getattr(self, "_forced_persona", None)
+        if forced:
+            try:
+                from skill_manager.core import SkillManager
+                persona_obj = SkillManager(agent_id=getattr(self.config, "name", None)).get_persona(forced)
+            except Exception:
+                persona_obj = None
+            if persona_obj is not None:
+                if getattr(persona_obj, "skillset", None):
+                    self.config.skillset = persona_obj.skillset
+                if getattr(persona_obj, "carton_identity", None):
+                    self.carton_identity = persona_obj.carton_identity
+                frame = getattr(persona_obj, "frame", None)
+                if frame and frame.strip():
+                    _abs = " absolute" if getattr(self, "_forced_persona_absolute", False) else ""
+                    result = (f'<PERSONA_FRAME persona="{forced}"{_abs}>\n{frame.strip()}\n'
+                              f'</PERSONA_FRAME>\n\n' + result)
+        return result
 
 
     def _fire_hook(self, point: HookPoint, **kwargs):
@@ -2631,18 +2700,25 @@ You must fix the error before proceeding."""
                         )
                         break
 
-                    # Call API again — get next response
+                    # Refresh the system prompt BEFORE showing the agent the tool result. The
+                    # AFTER_TOOL_CALL tracker above (2564) already set self._active_work_dir to the dir the
+                    # agent just read/bashed into; refreshing HERE loads that dir's .claude/.heaven rules
+                    # (+ any skillmanager_persona= declaration) into the system prompt so they are present
+                    # in the ainvoke below — i.e. the agent sees the tool result WITH the just-entered dir's
+                    # context already loaded. (Isaac 2026-07-09, the twofold devdir mechanism: track on tool
+                    # use, then load into the prompt BEFORE the result is shown. Previously this refresh ran
+                    # AFTER the ainvoke, so the dir's rules landed one model-call late.)
+                    self.refresh_system_prompt()
+                    sys_msg_idx = next(i for i, msg in enumerate(conversation_history) if isinstance(msg, SystemMessage))
+                    if self.config.system_prompt != conversation_history[sys_msg_idx].content:
+                        conversation_history[sys_msg_idx] = SystemMessage(content=self.config.system_prompt)
+
+                    # Call API again — get next response (now sees the just-entered dir's rules/persona)
                     conversation_history = await self._maybe_compact(conversation_history)
                     current_response = _stamp_ts(await self.chat_model.ainvoke(conversation_history))
                     conversation_history.append(current_response)
                     if heaven_main_callback:
                         heaven_main_callback(current_response)
-
-                    # Refresh system prompt
-                    self.refresh_system_prompt()
-                    sys_msg_idx = next(i for i, msg in enumerate(conversation_history) if isinstance(msg, SystemMessage))
-                    if self.config.system_prompt != conversation_history[sys_msg_idx].content:
-                        conversation_history[sys_msg_idx] = SystemMessage(content=self.config.system_prompt)
 
                     # Process text for agent goal tracking
                     if isinstance(current_response.content, list):

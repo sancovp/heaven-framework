@@ -6,7 +6,7 @@ the target `.heaven` directory, where heaven's existing loaders pick it up:
 
   skills/   -> <heaven>/skills     (auto-loaded by hooks.skill_autoload — name+desc+path injected)
   agents/   -> <heaven>/agents      (resolved by use_hermes / the agent loaders)
-  rules/    -> <heaven>/rules        (auto-loaded by hooks.dir_context)
+  rules/    -> <heaven>/rules        (auto-loaded by BaseHeavenAgent.resolve_devdirs — the native devdir loader)
   hooks/    -> <heaven>/hooks
   commands/ -> <heaven>/commands     (the slash-command shim consumes these — TODO)
   .mcp.json -> merged into <heaven>/mcp.json   (mcpServers)
