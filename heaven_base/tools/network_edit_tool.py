@@ -108,12 +108,6 @@ def clean_networkedit_args(args) -> dict:
     
     return args
 
-def normalize_target_container(target_container: Optional[str]) -> Optional[str]:
-    """Map local sentinel values to the local filesystem execution path."""
-    if isinstance(target_container, str) and target_container.strip().lower() == "local":
-        return None
-    return target_container
-
 class EditHelper:
     """
     An filesystem editor tool that allows the agent to view, create, and edit files.
@@ -153,7 +147,6 @@ class EditHelper:
         # display_guide_manual: Optional[bool] = None,
         **kwargs,
     ):
-        target_container = normalize_target_container(target_container)
         # if display_guide_manual:
         #     return guide_manual
         # First clean any stringified arguments
@@ -1309,3 +1302,4 @@ async def {cls.name}({', '.join(param_list)}):
         
     #     # Let parent create() do its thing
     #     return super().create(adk)
+
