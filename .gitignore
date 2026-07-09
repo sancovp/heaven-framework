@@ -170,7 +170,8 @@ cython_debug/
 ehthumbs.db
 Thumbs.db
 
-# Test files
-test_*.py
-*_test.py
-tests/
+# Test files — the repo-root tests/ suite IS tracked (the T13 test floor).
+# The old blanket ignore (test_*.py / *_test.py / tests/) silently discarded
+# committed tests and let the publisher mirror-delete them (2026-07-09 find).
+# Only ignore scratch tests outside tests/:
+/test_scratch_*.py
