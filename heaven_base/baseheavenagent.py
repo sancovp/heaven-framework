@@ -865,11 +865,12 @@ class BaseHeavenAgent(ABC):
         self.known_config_paths = [str(path) for path in self.known_config_paths]
         self.hooks = config.hook_registry
         self._devdir_hook_keys = set()
-        # Devdir roots: the explicit STARTING dir (config.working_dir, else the launch cwd) PLUS the dirs
-        # the agent actually reads/bashes into (tracked by _track_active_work_dir below). resolve_devdirs
-        # walks ALL of them, so an agent loads BOTH its own AIOS rules AND the rules of the repo it works in.
+        # Devdir roots: the explicit STARTING dir (config.working_dir, else the launch cwd) is ALWAYS on;
+        # PLUS the SINGLE current dir the agent is working in (its most recent read/bash, tracked by
+        # _track_active_work_dir below — it SWAPS on move, so leaving a dir drops its rules). resolve_devdirs
+        # walks both, so an agent loads its own AIOS rules AND the rules of the dir it is currently in.
         self._configured_cwd = config.working_dir or os.getcwd()
-        self._active_work_dirs: list[str] = []
+        self._active_work_dir: Optional[str] = None
         # Persona resolution: if persona set, load from SkillManager and extract components
         self.carton_identity = config.carton_identity
         # Set agent context for SkillTool so it uses agent-scoped SkillManager
@@ -1476,39 +1477,32 @@ You must fix the error before proceeding."""
         except Exception:
             return []
 
-    _MAX_ACTIVE_WORK_DIRS = 8
-
     def _track_active_work_dir(self, ctx) -> None:
-        """AFTER_TOOL_CALL hook: record the dir a Read/Bash touched so resolve_devdirs loads its rules.
-
-        Newest-refines: the most recently touched dir is moved to the END (so its rules refine earlier
-        ones). Capped at _MAX_ACTIVE_WORK_DIRS (oldest dropped). Best-effort — NEVER raises (a tracking
-        failure must not break a run)."""
+        """AFTER_TOOL_CALL hook: set the SINGLE current working dir from the dir a Read/Bash touched, so
+        resolve_devdirs loads its rules. It SWAPS — moving to a new dir REPLACES the old one, so a dir's
+        devdir rules GO AWAY when the agent leaves it (mirrors how a CLAUDE.md is active only while you are
+        in that dir). The configured/launch cwd is always-on separately (see _resolve_devdir_roots).
+        Best-effort — NEVER raises (a tracking failure must not break a run)."""
         try:
             path = _extract_tool_path(getattr(ctx, "tool_name", ""), getattr(ctx, "tool_args", None))
             if not path:
                 return
             d = path if os.path.isdir(path) else os.path.dirname(path)
-            if not d or not os.path.isdir(d):
-                return
-            dirs = self._active_work_dirs
-            if d in dirs:
-                dirs.remove(d)  # move to end → newest-refines
-            dirs.append(d)
-            if len(dirs) > self._MAX_ACTIVE_WORK_DIRS:
-                del dirs[0]
+            if d and os.path.isdir(d):
+                self._active_work_dir = d   # swap — new dir replaces old (leave → old dir's rules gone)
         except Exception:
             pass
 
     def _resolve_devdir_roots(self, start: Optional[Union[str, Path]] = None) -> list[Path]:
-        """Ordered, de-duped dir LEVELS to load devdir context from: the configured/launch cwd's ancestry
-        PLUS the ancestry of every dir the agent has read/bashed into (newest-refines) PLUS an explicit
-        `start` if a caller passes one. `getattr` defaults keep this safe for object.__new__ test agents
-        that never ran __init__."""
+        """Ordered, de-duped dir LEVELS to load devdir context from: the ALWAYS-ON configured/launch cwd's
+        ancestry PLUS the ancestry of the SINGLE current dir the agent is working in (its most recent
+        read/bash — this SWAPS on move, so leaving a dir drops its rules) PLUS an explicit `start` if a
+        caller passes one. `getattr` defaults keep this safe for object.__new__ test agents that never ran
+        __init__."""
         roots: list[str] = [getattr(self, "_configured_cwd", None) or os.getcwd()]
-        for d in getattr(self, "_active_work_dirs", []):
-            if d not in roots:
-                roots.append(d)
+        active = getattr(self, "_active_work_dir", None)
+        if active and active not in roots:
+            roots.append(active)
         if start is not None and str(start) not in roots:
             roots.append(str(start))
         levels: list[Path] = []
