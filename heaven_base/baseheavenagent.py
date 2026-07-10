@@ -1499,7 +1499,18 @@ You must fix the error before proceeding."""
         if spec is None or spec.loader is None:
             raise ImportError(f"cannot load spec for {path}")
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        try:
+            spec.loader.exec_module(module)
+        except SystemExit as exc:
+            # A .claude/hooks dir also holds STANDALONE stdin-hook scripts (the
+            # Claude Code hook contract) that sys.exit() at module level when
+            # run without a tool-call payload. SystemExit is a BaseException, so
+            # without this it escapes the caller's except-Exception skip path
+            # and silently kills the HOST process (proven 2026-07-10: any agent
+            # constructed from /home/GOD died at codenose_pretool.py exit 0).
+            raise ImportError(
+                f"{path} exited at import (SystemExit {exc.code}) — a standalone "
+                f"script, not a devdir hook module") from exc
         return module
 
     def _register_devdir_hook_file(self, path: Path) -> bool:
