@@ -6,6 +6,8 @@
 
 ⭐ 0 stars • 🕑 Updated 2026-07-10
 
+[Marketplace](https://github.com/sancovp/sancrev-marketplace) • [Docs](https://sancovp.github.io/aisaac/)
+
 📦 Auto-published from the monorepo • [CHANGELOG](./CHANGELOG.md) • [sancovp/heaven-framework](https://github.com/sancovp/heaven-framework)
 
 <!-- SCALABLE-PUBLISHING:AUTOGEN END -->
