@@ -2,11 +2,9 @@
 
 <!-- SCALABLE-PUBLISHING:AUTOGEN START (managed block — do not edit between these markers) -->
 
-![License](https://img.shields.io/badge/license-Other-blue.svg) ![Stars](https://img.shields.io/github/stars/sancovp/heaven-framework.svg?style=social) ![Updated](https://img.shields.io/badge/updated-2026_07_16-lightgrey.svg)
+![License](https://img.shields.io/badge/license-Other-blue.svg) ![Stars](https://img.shields.io/github/stars/sancovp/heaven-framework.svg?style=social) ![Updated](https://img.shields.io/badge/updated-2026_07_17-lightgrey.svg)
 
-⭐ 0 stars • 🕑 Updated 2026-07-16
-
-[Marketplace](https://github.com/sancovp/sancrev-marketplace) • [Docs](https://sancovp.github.io/aisaac/)
+⭐ 0 stars • 🕑 Updated 2026-07-17
 
 📦 Auto-published from the monorepo • [CHANGELOG](./CHANGELOG.md) • [sancovp/heaven-framework](https://github.com/sancovp/heaven-framework)
 
