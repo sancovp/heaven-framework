@@ -491,7 +491,50 @@ class History(BasePiece):
                 uni_messages.append({"role": "system", "content": msg.content})
             
             elif isinstance(msg, HumanMessage):
-                uni_messages.append({"role": "user", "content": msg.content})
+                # PARITY (docs/UNI-PARITY.md row 17): normalize multimodal HumanMessage content
+                # to the OpenAI shape uni-api expects. Prior langchain runs may have stored
+                # PROVIDER-shaped image blocks (Anthropic `type:"image"` source/base64, Google
+                # `image_url` as a bare data-URI string); uni-api validates against the OpenAI
+                # schema (`image_url` as {"url": ...}), so convert here. Plain-string content
+                # passes through unchanged; unknown block types are dropped silently.
+                if isinstance(msg.content, list):
+                    _blocks = []
+                    for item in msg.content:
+                        if isinstance(item, str):
+                            _blocks.append({"type": "text", "text": item})
+                        elif isinstance(item, dict):
+                            _btype = item.get("type")
+                            if _btype == "text":
+                                _blocks.append(item)
+                            elif _btype == "image_url":
+                                _iu = item.get("image_url")
+                                if isinstance(_iu, str):
+                                    # Google form: bare data-URI/URL string → OpenAI dict form
+                                    _blocks.append({"type": "image_url", "image_url": {"url": _iu}})
+                                else:
+                                    _blocks.append(item)
+                            elif _btype == "image":
+                                # Anthropic form: {"type":"image","source":{"type":"base64",...}}
+                                _src = item.get("source") or {}
+                                # PARITY (round 3): require actual base64 data — a block with
+                                # missing/empty source.data would emit an empty data-URI
+                                # ("data:image/png;base64,"); SKIP it instead (mirrors
+                                # _build_uni_human_content's skip-when-no-data contract).
+                                if isinstance(_src, dict) and _src.get("type") == "base64" and _src.get("data"):
+                                    _blocks.append({
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": f"data:{_src.get('media_type', 'image/png')};base64,{_src['data']}"
+                                        },
+                                    })
+                                # non-base64 / data-less image sources: dropped silently
+                            # any other dict block type: dropped silently
+                        # any other item type: dropped silently
+                    # PARITY (round 3): if normalization dropped EVERY block, fall back to
+                    # content: "" — an empty content list 400s at the gateway.
+                    uni_messages.append({"role": "user", "content": _blocks if _blocks else ""})
+                else:
+                    uni_messages.append({"role": "user", "content": msg.content})
             
             elif isinstance(msg, AIMessage):
                 uni_msg = {"role": "assistant", "content": msg.content or ""}
@@ -509,6 +552,8 @@ class History(BasePiece):
                     uni_msg["tool_calls"] = msg.tool_calls
                 
                 # Handle Anthropic style tool_use in content
+                # PARITY (docs/UNI-PARITY.md §3.4): assistant `thinking` blocks are dropped and
+                # text parts are joined into a single string here — by design.
                 elif isinstance(msg.content, list):
                     tool_calls = []
                     content_parts = []
@@ -577,11 +622,21 @@ class History(BasePiece):
                     langchain_tool_calls = []
                     for tc in uni_msg["tool_calls"]:
                         if "function" in tc:
+                            # PARITY hardening (2026-07-10 round 2): models can emit malformed
+                            # `arguments` JSON. This converter now runs on run_on_uni_api's hot
+                            # mirror path (every assistant tool-call turn), so a bad-args turn
+                            # must not crash history conversion — preserve the raw string.
+                            try:
+                                _tc_args = json.loads(tc["function"]["arguments"])
+                                if not isinstance(_tc_args, dict):
+                                    _tc_args = {"__raw_arguments__": tc["function"]["arguments"]}
+                            except (json.JSONDecodeError, TypeError):
+                                _tc_args = {"__raw_arguments__": tc["function"]["arguments"]}
                             # Convert OpenAI format to LangChain format
                             langchain_tool_calls.append({
                                 "id": tc["id"],
                                 "name": tc["function"]["name"],
-                                "args": json.loads(tc["function"]["arguments"]),
+                                "args": _tc_args,
                                 "type": "tool_call"
                             })
                         else:

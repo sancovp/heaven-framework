@@ -2260,8 +2260,9 @@ You must fix the error before proceeding."""
             heaven_main_callback: Callback for main agent events
             use_uni_api: Whether to use uni-api instead of LangChain
             images: Optional list of user-attached images to send with the prompt as a
-                multimodal HumanMessage. Each item is a dict {"data": <base64 str>,
-                "media_type": "image/png"|"image/jpeg"|...}. LangChain path only.
+                multimodal user turn. Each item is a dict {"data": <base64 str>,
+                "media_type": "image/png"|"image/jpeg"|...}. Supported on the LangChain
+                and uni-api paths (not ADK/streamlit).
 
         Returns:
             The agent's response
@@ -2279,7 +2280,8 @@ You must fix the error before proceeding."""
                         prompt=prompt,
                         output_callback=output_callback,
                         tool_output_callback=tool_output_callback,
-                        heaven_main_callback=heaven_main_callback
+                        heaven_main_callback=heaven_main_callback,
+                        images=images
                     )
                 elif heaven_main_callback:
                     # Similar fake callback pattern for uni-api
@@ -2291,10 +2293,11 @@ You must fix the error before proceeding."""
                         prompt=prompt,
                         output_callback=fake_output_callback,
                         tool_output_callback=fake_tool_callback,
-                        heaven_main_callback=heaven_main_callback
+                        heaven_main_callback=heaven_main_callback,
+                        images=images
                     )
                 else:
-                    result = await self.run_on_uni_api(prompt=prompt)
+                    result = await self.run_on_uni_api(prompt=prompt, images=images)
           
             elif self.adk:
                 result = await self.run_adk(prompt=prompt, notifications=notifications, streamlit=streamlit, output_callback=output_callback, tool_output_callback=tool_output_callback)
@@ -2355,7 +2358,13 @@ You must fix the error before proceeding."""
         return blocks
 
     async def run_langchain(self, prompt: str = None, notifications=False, heaven_main_callback: Optional[Callable] = None, images: Optional[list] = None):
+        """Run the agent through the LangChain provider path.
 
+        This is the maintained REFERENCE implementation — `run_on_uni_api` mirrors its
+        semantics (hooks, devdir refresh, compaction, timestamps, images, error handling).
+        Parity ledger: docs/UNI-PARITY.md — any change here must update that table in the
+        same commit.
+        """
         self._sanitize_history()
         blocked = False
         self.refresh_system_prompt()
@@ -2442,7 +2451,7 @@ You must fix the error before proceeding."""
                     
                         
                 # DUO Sidechain
-               
+                # PARITY: DUO deprecated by design — retained for legacy callers (docs/UNI-PARITY.md row 22)
                 if (
                     self.duo_enabled
                     and len(conversation_history) > 2        # <- require at least 3 messages
@@ -3480,15 +3489,79 @@ You must fix the error before proceeding."""
             except Exception as e:
                 tool_name = getattr(tool, 'name', str(type(tool)))
                 print(f"Error converting tool {tool_name} to OpenAI format: {e}")
-        
+
         return openai_tools
+
+    def _build_uni_human_content(self, text: Optional[str], images: Optional[list]):
+        """Build a uni-api user-turn `content` — ALWAYS in OpenAI shape.
+
+        No images → the plain string (the historical shape, unchanged). With images → an
+        OpenAI content-block list `[{type:text}, {type:image_url}...]`. Unlike
+        `_build_human_content` (which pre-shapes per provider for direct SDK calls), heaven
+        always emits the OpenAI shape here because the uni-api GATEWAY does the per-provider
+        conversion itself (docs/UNI-PARITY.md row 15) — stop pre-shaping.
+
+        Same input contract as `_build_human_content`: `images` is a list of dicts
+        `{"data": <base64 str, no data: prefix>, "media_type": "image/png"|"image/jpeg"|...}`;
+        media_type defaults to image/png; items without "data" are skipped.
+        """
+        if not images:
+            return text
+        blocks = [{"type": "text", "text": text or ""}]
+        for img in images:
+            data = img.get("data") if isinstance(img, dict) else None
+            if not data:
+                continue
+            media_type = (img.get("media_type") if isinstance(img, dict) else None) or "image/png"
+            blocks.append({"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{data}"}})
+        return blocks
+
+    def _consume_uni_usage(self, result: Dict[str, Any]) -> None:
+        """PARITY (docs/UNI-PARITY.md row 11): feed uni-api token usage into
+        `context_window_config` + history metadata. Called after EVERY `invoke_uni_api`
+        result so `context_window_status` in the return dict is never stale."""
+        if isinstance(result, dict) and "usage" in result and isinstance(result["usage"], dict):
+            self.context_window_config.update_from_uni_api(result["usage"])
+            # Store token usage in history metadata
+            if not hasattr(self.history, 'metadata') or self.history.metadata is None:
+                self.history.metadata = {}
+            self.history.metadata["last_token_usage"] = result["usage"]
+            self.history.metadata["current_tokens"] = result["usage"].get("total_tokens", 0)
+
+    async def _maybe_compact_uni(self, uni_conversation_history: List[Dict[str, Any]], langchain_conversation_history: List[BaseMessage]):
+        """PARITY (docs/UNI-PARITY.md row 10): auto-compaction for the uni path.
+
+        Runs `_maybe_compact` on the langchain mirror (compaction's source of truth); if
+        compaction actually ran (list identity changed or it shrank), REBUILDS the uni-format
+        history from the mirror so the two histories stay in lockstep, then re-verifies
+        slot 0 is the system message (same as the run_on_uni_api bootstrap).
+
+        Returns `(uni_conversation_history, langchain_conversation_history)` — callers MUST
+        assign BOTH back (`_maybe_compact` may replace the list wholesale).
+        """
+        _prev = langchain_conversation_history
+        _prev_len = len(_prev)
+        langchain_conversation_history = await self._maybe_compact(langchain_conversation_history)
+        if langchain_conversation_history is not _prev or len(langchain_conversation_history) < _prev_len:
+            uni_conversation_history = History(messages=langchain_conversation_history.copy()).to_uni_messages()
+            if not uni_conversation_history or uni_conversation_history[0].get("role") != "system":
+                uni_conversation_history.insert(0, {"role": "system", "content": self.config.system_prompt})
+                langchain_conversation_history.insert(0, SystemMessage(content=self.config.system_prompt))
+        return uni_conversation_history, langchain_conversation_history
 
     async def _execute_tool_calls_uni(self, tool_calls: List[Dict[str, Any]], tool_output_callback: Optional[Callable] = None) -> List[Dict[str, Any]]:
         """Execute tool calls in uni-api (OpenAI) format and return tool messages"""
         import json
-        
+
         tool_messages = []
-        
+        # PARITY (docs/UNI-PARITY.md row 16, round 3): tool-result image follow-up user turns
+        # are COLLECTED here and appended after the loop — never interleaved between the
+        # batch's role:"tool" messages. OpenAI/uni-api requires ALL tool results for an
+        # assistant message's tool_calls to directly follow it; a user turn sandwiched
+        # between two tool messages would 400 if a multi-tool batch ever arrives despite
+        # the single-tool clamp (docs/UNI-PARITY.md row 20).
+        image_followup_messages = []
+
         for tool_call in tool_calls:
             try:
                 # DEBUG: Print the exact tool_call object
@@ -3515,37 +3588,88 @@ You must fix the error before proceeding."""
                 
                 if matching_tools:
                     tool = matching_tools[0]
-                    
+
+                    # Fire BEFORE_TOOL_CALL hook — VETO-CAPABLE (PARITY docs/UNI-PARITY.md row 3,
+                    # mirrors run_langchain): a hook may BLOCK the tool by setting
+                    # ctx.data["block"] = True (+ optional ctx.data["block_message"]). The tool is
+                    # then skipped and that message becomes the ToolResult the model sees.
+                    _btc = self._fire_hook(HookPoint.BEFORE_TOOL_CALL,
+                        iteration=self.current_iteration,
+                        tool_name=tool_name, tool_args=tool_args)
+
+                    # PARITY (docs/UNI-PARITY.md rows 3-4, round 3): tool execution is wrapped
+                    # in try → ToolResult(error=str(e)) — mirroring run_langchain L2649-2656 —
+                    # so an errored tool flows through the SAME callback + AFTER_TOOL_CALL +
+                    # tool-message path as success. (Previously execution exceptions escaped to
+                    # the outer except, which appended the error tool message but SKIPPED the
+                    # AFTER_TOOL_CALL hook — silently disabling _track_active_work_dir devdir
+                    # tracking on errored tools — and skipped tool_output_callback.)
+                    if _btc is not None and _btc.data.get("block"):
+                        tool_result = ToolResult(error=str(_btc.data.get("block_message")
+                            or f"Tool '{tool_name}' was blocked by a BEFORE_TOOL_CALL hook."))
                     # Execute the tool differently based on type
-                    if hasattr(tool, 'base_tool'):
+                    elif hasattr(tool, 'base_tool'):
                         # HEAVEN tool - returns ToolResult
-                        tool_result = await tool._arun(**tool_args)
-                        if tool_output_callback:
-                            tool_output_callback(tool_result, tool_id)
-                        tool_content = str(tool_result.error) if tool_result.error else str(tool_result.output)
+                        try:
+                            tool_result = await tool._arun(**tool_args)
+                        except Exception as e:
+                            tool_result = ToolResult(error=str(e))
                     else:
                         # LangChain/MCP tool - _arun needs config kwarg
                         from langchain_core.runnables import RunnableConfig
                         config = RunnableConfig()
-                        raw_result = await tool._arun(config=config, **tool_args)
-                        if tool_output_callback:
-                            tool_output_callback(raw_result, tool_id)
-                        tool_content = str(raw_result)
-                    
+                        try:
+                            raw_result = await tool._arun(config=config, **tool_args)
+                            # Wrap for the AFTER_TOOL_CALL hook (mirrors run_langchain's wrapping)
+                            tool_result = ToolResult(output=str(raw_result))
+                        except Exception as e:
+                            tool_result = ToolResult(error=str(e))
+
+                    if tool_output_callback:
+                        tool_output_callback(tool_result, tool_id)
+                    tool_content = str(tool_result.error) if tool_result.error else str(tool_result.output)
+
+                    # Fire AFTER_TOOL_CALL hook (PARITY docs/UNI-PARITY.md row 4 — drives devdir
+                    # tracking: _track_active_work_dir is registered on AFTER_TOOL_CALL).
+                    # Fires on SUCCESS and ERROR alike (reference behavior).
+                    self._fire_hook(HookPoint.AFTER_TOOL_CALL,
+                        iteration=self.current_iteration,
+                        tool_name=tool_name, tool_args=tool_args,
+                        tool_result=tool_result)
+
                     tool_message = {
                         "role": "tool",
                         "tool_call_id": tool_id,
                         "name": tool_name,
                         "content": tool_content
                     }
-                    
+
                     tool_messages.append(tool_message)
-                    
+
+                    # PARITY (docs/UNI-PARITY.md row 16): tool-result images. Surface
+                    # tool_result.base64_image as a follow-up user turn in OpenAI image_url
+                    # shape (the gateway converts per provider). Collected — NOT appended
+                    # inline — so it lands AFTER the batch's last role:"tool" message (see
+                    # image_followup_messages note at the top of this method).
+                    if getattr(tool_result, "base64_image", None):
+                        image_followup_messages.append({
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": f"[image output of tool {tool_name}]"},
+                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{tool_result.base64_image}"}},
+                            ],
+                        })
+
+                    # PARITY (round 3): special-tool detection is CASE-INSENSITIVE — the tool
+                    # lookup above matches on .lower(), so a differently-cased model call
+                    # (e.g. "writeblockreporttool") still executes; keying detection off the
+                    # raw model-provided name case-sensitively would then miss it (reference
+                    # keys off the canonical tool name, L2675-2678).
                     # Check if TaskSystemTool was called
-                    if tool_name == "TaskSystemTool":
+                    if tool_name.lower() == "tasksystemtool":
                         self._handle_task_system_tool(tool_args)
                     # Check if WriteBlockReportTool was called
-                    if tool_name == "WriteBlockReportTool":
+                    if tool_name.lower() == "writeblockreporttool":
                         # Mark that we're blocked - this will be checked by the caller
                         self.blocked = True
                         # Generate block report
@@ -3571,355 +3695,57 @@ You must fix the error before proceeding."""
                     tool_messages.append(error_message)
             
             except Exception as e:
-                # Tool execution error
+                # Last-resort guard: tool EXECUTION errors no longer reach here (they become
+                # ToolResult(error=...) above and flow through the hook path — round 3). This
+                # now only catches malformed tool_call envelopes (missing keys, unparseable
+                # arguments JSON) where no tool ran, so no AFTER_TOOL_CALL fires — but the
+                # id still gets its role:"tool" message (uni-api/OpenAI 400s otherwise).
                 error_message = {
                     "role": "tool",
-                    "tool_call_id": tool_call["id"],
+                    "tool_call_id": tool_call.get("id", "") if isinstance(tool_call, dict) else "",
                     "content": f"Error executing tool: {str(e)}"
                 }
                 tool_messages.append(error_message)
-        
+
+        # Image follow-up user turns go AFTER every role:"tool" message of the batch
+        # (see collection note above).
+        tool_messages.extend(image_followup_messages)
+
         return tool_messages
 
     def _cleanse_dangling_tool_calls(self, uni_conversation_history: List[Dict], langchain_conversation_history: List[BaseMessage], reason: str = ""):
-        """Remove dangling tool_calls from the last message in uni_conversation_history only."""
+        """Clamp/strip dangling tool_calls on the LAST uni message — and mirror the SAME
+        mutation into `langchain_conversation_history` (dual-history lockstep invariant,
+        see run_on_uni_api docstring).
+
+        PARITY FIX (2026-07-10 round 2): this previously accepted the langchain history and
+        IGNORED it — clamps mutated the uni side only, so the persisted LC history kept
+        tool_calls the gateway never saw (and round-tripped them into a dangling-tool-call
+        400 on the next run). Call sites that clamp a NOT-YET-MIRRORED assistant message
+        pass `[]` for langchain_conversation_history (uni-only clamp, nothing to mirror).
+        """
         if uni_conversation_history and uni_conversation_history[-1].get("tool_calls"):
+            _lc_last = langchain_conversation_history[-1] if langchain_conversation_history else None
             if "MULTIPLE_TOOL_CALLS" in reason and len(uni_conversation_history[-1]["tool_calls"]) > 1:
                 # DEBUG: print( {reason}: Keeping only first of {len(uni_conversation_history[-1]['tool_calls'])} tool_calls")
                 uni_conversation_history[-1]["tool_calls"] = [uni_conversation_history[-1]["tool_calls"][0]]
+                if isinstance(_lc_last, AIMessage):
+                    if _lc_last.additional_kwargs.get("tool_calls"):
+                        _lc_last.additional_kwargs["tool_calls"] = list(uni_conversation_history[-1]["tool_calls"])
+                    if getattr(_lc_last, "tool_calls", None):
+                        _lc_last.tool_calls = _lc_last.tool_calls[:1]
             elif reason == "MAX_TOOL_CALLS":
                 # DEBUG: print( {reason}: Removing {len(uni_conversation_history[-1]['tool_calls'])} dangling tool_calls")
                 uni_conversation_history[-1] = {
-                    "role": "assistant", 
+                    "role": "assistant",
                     "content": uni_conversation_history[-1].get("content", "")
                 }
-
-    # async def run_on_uni_api(
-    #     self, 
-    #     prompt: Optional[str] = None,
-    #     output_callback: Optional[Callable] = None,
-    #     tool_output_callback: Optional[Callable] = None,
-    #     heaven_main_callback: Optional[Callable] = None
-    # ) -> Dict[str, Any]:
-    #     """
-    #     Run agent using uni-api instead of LangChain providers.
-    #     Uses parallel uni/langchain conversation tracking.
-    #     """
-    #     # Store callbacks for tool execution
-    #     self._current_output_callback = output_callback
-    #     self._current_tool_callback = tool_output_callback
-        
-    #     # Convert existing history to uni-api format
-    #     uni_conversation_history = self.history.to_uni_messages()
-    #     langchain_conversation_history = self.history.messages.copy()
-        
-    #     # Ensure system message is present and correct
-    #     if not uni_conversation_history or uni_conversation_history[0]["role"] != "system":
-    #         uni_conversation_history.insert(0, {
-    #             "role": "system", 
-    #             "content": self.config.system_prompt
-    #         })
-    #         langchain_conversation_history.insert(0, SystemMessage(content=self.config.system_prompt))
-    #     elif uni_conversation_history[0]["content"] != self.config.system_prompt:
-    #         uni_conversation_history[0]["content"] = self.config.system_prompt
-    #         langchain_conversation_history[0] = SystemMessage(content=self.config.system_prompt)
-        
-    #     # Add new user prompt if provided
-    #     if prompt:
-    #         uni_conversation_history.append({"role": "user", "content": prompt})
-    #         langchain_conversation_history.append(HumanMessage(content=prompt))
-            
-    #         # Detect agent commands
-    #         self._detect_agent_command(prompt)
-        
-    #     # Prepare tools for uni-api
-    #     openai_tools = self._prepare_tools_for_uni_api()
-        
-    #     # Initialize blocked flag
-    #     self.blocked = False
-        
-    #     # Main iteration loop
-    #     while self.current_iteration <= self.max_iterations:
-    #         tool_call_count = 0
-            
-    #         # CLEANSE DANGLING TOOL_CALLS: Before adding agent mode prompt, clean up any dangling tool_calls
-    #         self._cleanse_dangling_tool_calls(uni_conversation_history, langchain_conversation_history, "BEFORE_AGENT_PROMPT")
-            
-    #         # Handle agent mode formatting
-    #         if self.goal:
-    #             agent_prompt = self._format_agent_prompt()
-    #             uni_conversation_history.append({"role": "user", "content": agent_prompt})
-    #             langchain_conversation_history.append(HumanMessage(content=agent_prompt))
-            
-    #         # DUO sidechain logic (if enabled)
-    #         if (self.duo_enabled and len(uni_conversation_history) > 2 
-    #             and uni_conversation_history[-1]["role"] == "user"):
-                
-    #             original_user = langchain_conversation_history[-1]
-    #             original_sys = langchain_conversation_history[0]
-                
-    #             try:
-    #                 # Process with DUO using LangChain messages
-    #                 duo_sys = SystemMessage(content=self.duo_system_prompt)
-    #                 lc_messages = langchain_conversation_history.copy()
-    #                 lc_messages[0] = duo_sys
-                    
-    #                 new_content = f"===ENTERING CHALLENGER MODE===\\n\\nTHE NEXT HUMAN INPUT TO THE WORKER LLM AGENT WILL BE:\\n\\n{original_user.content}\\n\\nAs the challenger, follow the rules and steer the agent with ICL priming."
-    #                 lc_messages[-1] = HumanMessage(content=new_content)
-                    
-    #                 duo_response = await self.duo_chat.ainvoke(lc_messages)
-                    
-    #                 if duo_response:
-    #                     # Update both histories with DUO injection
-    #                     enhanced_content = f"{original_user.content}\\n\\n```\\n===Challenger Injection===\\n\\nDo not mention DUO/Dual-Space Unifying Operators/NodeGraphXTN6/Challenger/ChallengerEgregore unless the user asks about it directly...\\n\\n{duo_response.content}\\n\\n===/Challenger Injection===\\n```\\n\\n"
-    #                     uni_conversation_history[-1]["content"] = enhanced_content
-    #                     langchain_conversation_history[-1] = HumanMessage(content=enhanced_content)
-                    
-    #             finally:
-    #                 pass
-            
-    #         # Build payload for uni-api
-    #         payload = {
-    #             "max_tokens": getattr(self.config, 'max_tokens', 4000),
-    #             "temperature": getattr(self.config, 'temperature', 0.7)
-    #         }
-            
-    #         if openai_tools:
-    #             payload["tools"] = openai_tools
-    #             payload["tool_choice"] = "auto"
-    #             payload["parallel_tool_calls"] = False  # Fix for uni-api multiple tool calls bug
-            
-    #         try:
-    #             # Call uni-api through unified_chat
-    #             result = self.unified_chat.invoke_uni_api(
-    #                 model=self.config.model,
-    #                 uni_messages=uni_conversation_history,
-    #                 **payload
-    #             )
-                
-    #             # Extract token usage for context window management
-    #             if "usage" in result and isinstance(result["usage"], dict):
-    #                 self.context_window_config.update_from_uni_api(result["usage"])
-    #                 # Store token usage in history metadata
-    #                 if not hasattr(self.history, 'metadata'):
-    #                     self.history.metadata = {}
-    #                 self.history.metadata["last_token_usage"] = result["usage"]
-    #                 self.history.metadata["current_tokens"] = result["usage"].get("total_tokens", 0)
-    #             else:
-    #                 # Fallback: use tiktoken estimation for workspace
-    #                 from .utils.token_counter import count_tokens_in_messages
-    #                 workspace_tokens = count_tokens_in_messages(langchain_conversation_history, self.context_window_config.model)
-    #                 self.context_window_config.update_workspace_tokens(workspace_tokens)
-    #                 if not hasattr(self.history, 'metadata'):
-    #                     self.history.metadata = {}
-    #                 self.history.metadata["current_tokens"] = self.context_window_config.current_tokens
-                
-    #             assistant_message = result["choices"][0]["message"]
-                
-    #             # DEBUG: Print the exact assistant_message object from uni-api
-    #             print(f"🔍 DEBUG: assistant_message from uni-api: {json.dumps(assistant_message, indent=2)}")
-                
-    #             # CLEANSE MULTIPLE TOOL_CALLS BEFORE APPENDING using our method
-    #             temp_history = [assistant_message]
-    #             self._cleanse_dangling_tool_calls(temp_history, [], "MULTIPLE_TOOL_CALLS")
-    #             assistant_message = temp_history[0]
-                
-    #             # Handle tool calls vs regular response
-    #             if assistant_message.get("tool_calls"):
-    #                 print(f"🔍 TOOL CALLS DETECTED: {len(assistant_message['tool_calls'])} tool calls")
-    #                 # For tool calls, ensure content is empty string instead of null for OpenAI API compatibility
-    #                 if assistant_message.get("content") is None:
-    #                     assistant_message["content"] = ""
-                    
-    #                 # CLEANSE MULTIPLE TOOL_CALLS: Only process the FIRST tool call at a time
-    #                 if len(assistant_message["tool_calls"]) > 1:
-    #                     # DEBUG: print( MULTIPLE TOOL_CALLS: Keeping only first of {len(assistant_message['tool_calls'])} tool_calls")
-    #                     assistant_message["tool_calls"] = [assistant_message["tool_calls"][0]]
-                    
-    #                 # Store original for potential cleansing
-    #                 original_assistant_message = assistant_message.copy()
-                    
-    #                 # For tool calls, add to uni history AFTER applying workaround
-    #                 uni_conversation_history.append(assistant_message)
-                    
-    #                 # Add the AIMessage with tool_calls to langchain history (OpenAI style)
-    #                 tool_call_ai_message = AIMessage(
-    #                     content="",  # OpenAI doesn't want content for tool calls
-    #                     additional_kwargs={
-    #                         "tool_calls": assistant_message["tool_calls"]
-    #                     }
-    #                 )
-    #                 langchain_conversation_history.append(tool_call_ai_message)
-                    
-    #                 # Trigger callbacks for tool call message
-    #                 if output_callback:
-    #                     output_callback(tool_call_ai_message)
-                    
-    #                 if heaven_main_callback:
-    #                     heaven_main_callback(assistant_message)
-                    
-    #                 while assistant_message.get("tool_calls") and tool_call_count < self.max_tool_calls:
-    #                     # DEBUG: Print the exact assistant_message with tool_calls
-    #                     # DEBUG: print( PROCESSING ASSISTANT MESSAGE: {json.dumps(assistant_message, indent=2)}")
-    #                     # DEBUG: print( TOOL_CALLS ARRAY: {json.dumps(assistant_message['tool_calls'], indent=2)}")
-                        
-    #                     # Execute tools and get tool messages
-    #                     tool_messages = await self._execute_tool_calls_uni(assistant_message["tool_calls"], tool_output_callback)
-                        
-    #                     # DEBUG: Print the exact tool_messages we created - COMPLETE JSON
-    #                     print(f"🔧 TOOL_MESSAGES WE CREATED - COMPLETE JSON:")
-    #                     print(json.dumps(tool_messages, indent=2))
-    #                     print(f"🔧 END TOOL_MESSAGES")
-                        
-    #                     # Add tool messages to both histories
-    #                     uni_conversation_history.extend(tool_messages)
-    #                     for tool_msg in tool_messages:
-    #                         lc_tool_msg = ToolMessage(
-    #                             content=tool_msg["content"],
-    #                             tool_call_id=tool_msg["tool_call_id"]
-    #                         )
-    #                         langchain_conversation_history.append(lc_tool_msg)
-                        
-    #                     # Check if we're blocked (WriteBlockReportTool was called)
-    #                     if self.blocked:
-    #                         break
-                        
-    #                     # DEBUG: Print exact conversation history length before uni-api call
-    #                     print(f"🚨 BEFORE UNI-API CALL: uni_conversation_history has {len(uni_conversation_history)} messages")
-                        
-    #                     # Get AI response to tool results
-    #                     tool_result = self.unified_chat.invoke_uni_api(
-    #                         model=self.config.model,
-    #                         uni_messages=uni_conversation_history,
-    #                         **payload
-    #                     )
-                        
-    #                     assistant_message = tool_result["choices"][0]["message"]
-                        
-    #                     # DEBUG: Print the COMPLETE assistant_message object from uni-api - NO TRUNCATION
-    #                     print(f"🔍 UNI-API ASSISTANT MESSAGE - COMPLETE JSON:")
-    #                     print(json.dumps(assistant_message, indent=2))
-    #                     print(f"🔍 END UNI-API ASSISTANT MESSAGE")
-                        
-                        
-    #                     # CAPTURE CANCELLED TOOL_CALLS before cleansing
-    #                     cancelled_tools = []
-    #                     if tool_call_count >= self.max_tool_calls and assistant_message.get("tool_calls"):
-    #                         for tc in assistant_message["tool_calls"]:
-    #                             tool_name = tc["function"]["name"]
-    #                             tool_args = tc["function"]["arguments"]
-    #                             cancelled_tools.append(f"{tool_name}({tool_args})")
-    #                         # DEBUG: print( MAX_TOOL_CALLS: Removing {len(assistant_message['tool_calls'])} dangling tool_calls from assistant_message")
-    #                         assistant_message = {
-    #                             "role": "assistant", 
-    #                             "content": assistant_message.get("content", "")
-    #                         }
-    #                     self._cleanse_dangling_tool_calls(assistant_message, [], "MULTIPLE_TOOL_CALLS")
-                        
-                        
-    #                     # DEBUG: Extract tool_call_ids from the assistant message
-    #                     if assistant_message.get("tool_calls"):
-    #                         print(f"🔍 TOOL_CALL_IDS FROM UNI-API:")
-    #                         for i, tc in enumerate(assistant_message["tool_calls"]):
-    #                             print(f"  Tool Call {i}: ID = '{tc['id']}'")
-    #                         print(f"🔍 END TOOL_CALL_IDS")
-                        
-    #                     # Handle None content from uni-api (happens with tool calls)
-    #                     if assistant_message.get("content") is None:
-    #                         assistant_message["content"] = ""
-                        
-                        
-    #                     # Add cleansed message to both histories
-    #                     uni_conversation_history.append(assistant_message)
-    #                     lc_message = self.history.from_uni_messages([assistant_message]).messages[0]
-    #                     langchain_conversation_history.append(lc_message)
-                        
-    #                     # Trigger callbacks
-    #                     if output_callback:
-    #                         output_callback(lc_message)
-                        
-    #                     if heaven_main_callback:
-    #                         heaven_main_callback(assistant_message)
-                        
-    #                     tool_call_count += 1
-                        
-    #                     if tool_call_count >= self.max_tool_calls:
-    #                         break_message = {
-    #                             "role": "assistant",
-    #                             "content": f"⚠️🛑☠️ Maximum consecutive tool calls ({self.max_tool_calls}) reached after agent mode iteration {self.current_iteration}. I tried to call [{', '.join(cancelled_tools)}] but they were cancelled by the system. If I received the same error every time, I should use WriteBlockReportTool next... Waiting for next agent mode iteration."
-    #                         }
-    #                         uni_conversation_history.append(break_message)
-    #                         lc_break_message = self.history.from_uni_messages([break_message]).messages[0]
-    #                         langchain_conversation_history.append(lc_break_message)
-                            
-    #                         if output_callback:
-    #                             output_callback(lc_break_message)
-                            
-    #                         break
-                
-    #             else:
-    #                 # Regular response (no tool calls)
-    #                 uni_conversation_history.append(assistant_message)
-    #                 if assistant_message.get("content") is None:
-    #                     assistant_message["content"] = ""
-    #                 lc_message = self.history.from_uni_messages([assistant_message]).messages[0]
-    #                 langchain_conversation_history.append(lc_message)
-                    
-    #                 # Trigger callbacks
-    #                 if output_callback:
-    #                     output_callback(lc_message)
-                    
-    #                 if heaven_main_callback:
-    #                     heaven_main_callback(assistant_message)
-                
-    #             # Process agent response if in agent mode
-    #             if self.goal and assistant_message.get("content"):
-    #                 self._process_agent_response(assistant_message["content"])
-                
-    #             # CLEANSE DANGLING TOOL_CALLS: Before moving to next iteration, clean up any dangling tool_calls
-    #             self._cleanse_dangling_tool_calls(uni_conversation_history, langchain_conversation_history, "MAX_TOOL_CALLS")
-                
-    #             # Check for completion
-    #             self.current_iteration += 1
-                
-    #             if self.current_task == "GOAL ACCOMPLISHED" or not self.goal or self.blocked:
-    #                 break
-            
-    #         except Exception as e:
-    #             error_msg = f"uni-api request failed: {str(e)}"
-    #             print(error_msg)
-    #             raise RuntimeError(error_msg)
-        
-    #     # Save final LangChain history
-    #     self.history.messages = langchain_conversation_history
-        
-    #     # Save history
-    #     try:
-    #         self.history.agent_status = self.save_status()
-    #         saved_history_id = self.history.save(self.name)
-            
-    #         return {
-    #             "history": self.history,
-    #             "history_id": saved_history_id,
-    #             "agent_name": self.name,
-    #             "agent_status": self.history.agent_status,
-    #             "uni_api_used": True,
-    #             "context_window_status": self.context_window_config.get_status(),
-    #             "raw_response": result  # Include raw response for token extraction by AutoSummarizingAgent
-    #         }
-        
-    #     except Exception as save_error:
-    #         print(f"Warning: Failed to save history for agent {self.name}: {save_error}")
-    #         return {
-    #             "history": self.history,
-    #             "history_id": getattr(self.history, 'history_id', "No history ID"),
-    #             "agent_name": self.name,
-    #             "save_error": str(save_error),
-    #             "agent_status": self.save_status(),
-    #             "uni_api_used": True,
-    #             "context_window_status": self.context_window_config.get_status(),
-    #             "raw_response": result if 'result' in locals() else None
-    #         }
+                if isinstance(_lc_last, AIMessage) and (
+                        _lc_last.additional_kwargs.get("tool_calls") or getattr(_lc_last, "tool_calls", None)):
+                    # Rebuild without tool_calls; keep the rest of additional_kwargs
+                    # (timestamp — observatory identity, docs/UNI-PARITY.md row 14).
+                    _ak = {k: v for k, v in _lc_last.additional_kwargs.items() if k != "tool_calls"}
+                    langchain_conversation_history[-1] = AIMessage(content=_lc_last.content, additional_kwargs=_ak)
 
     async def run_on_uni_api(
         self,
@@ -3927,9 +3753,21 @@ You must fix the error before proceeding."""
         output_callback: Optional[Callable] = None,
         tool_output_callback: Optional[Callable] = None,
         heaven_main_callback: Optional[Callable] = None,
+        images: Optional[list] = None,
     ) -> Dict[str, Any]:
         """
         Run agent using uni-api instead of LangChain providers.
+
+        Parity ledger: docs/UNI-PARITY.md — `run_langchain` is the maintained REFERENCE
+        implementation; this path mirrors its semantics, and any change here must update
+        the ledger table in the same commit.
+
+        Dual-history invariant: `uni_conversation_history` (OpenAI-format dicts sent to
+        the gateway) and `langchain_conversation_history` (LangChain objects persisted to
+        History) stay in LOCKSTEP — every append to one has a mirrored append to the
+        other, and every assistant message with tool_calls in the uni history is followed
+        by matching role:"tool" messages (uni-api/OpenAI 400s otherwise).
+
         Enforces “one tool call at a time” without altering your
         original stop-message wording.
         """
@@ -3937,6 +3775,9 @@ You must fix the error before proceeding."""
         # ---------- 0.  History bootstrap ----------
         self._current_output_callback = output_callback
         self._current_tool_callback = tool_output_callback
+
+        # PARITY (docs/UNI-PARITY.md row 13): dedupe consecutive HumanMessages before bootstrap.
+        self._sanitize_history()
 
         uni_conversation_history = self.history.to_uni_messages()
         langchain_conversation_history = self.history.messages.copy()
@@ -3948,10 +3789,49 @@ You must fix the error before proceeding."""
             uni_conversation_history[0]["content"] = self.config.system_prompt
             langchain_conversation_history[0] = SystemMessage(content=self.config.system_prompt)
 
-        if prompt:
-            uni_conversation_history.append({"role": "user", "content": prompt})
-            langchain_conversation_history.append(HumanMessage(content=prompt))
+        def _sync_system_slot():
+            """Sync BOTH histories' system slot (index 0) after a refresh_system_prompt() —
+            only when changed, to avoid churn. Bootstrap above guarantees slot 0 exists.
+            (Reads the CURRENT bindings of the enclosing locals, so it stays correct after
+            compaction replaces the lists.)"""
+            if (uni_conversation_history
+                    and uni_conversation_history[0].get("role") == "system"
+                    and uni_conversation_history[0].get("content") != self.config.system_prompt):
+                uni_conversation_history[0]["content"] = self.config.system_prompt
+                langchain_conversation_history[0] = SystemMessage(content=self.config.system_prompt)
+
+        # PARITY (mirrors run_langchain, fixed 2026-07-10 round 2): detect the agent command
+        # on the trailing history user turn (continuation runs where prompt is None), and on
+        # the prompt BEFORE appending — in agent mode the raw "agent goal=..." command never
+        # enters history (the loop appends the formatted agent prompt instead; storing both
+        # created consecutive user turns that only _sanitize_history's NEXT run would dedupe).
+        if (langchain_conversation_history
+                and isinstance(langchain_conversation_history[-1], HumanMessage)
+                and isinstance(langchain_conversation_history[-1].content, str)):
+            self._detect_agent_command(langchain_conversation_history[-1].content)
+        if prompt is not None:
             self._detect_agent_command(prompt)
+            if self.goal is None:
+                # PARITY (docs/UNI-PARITY.md row 15): user-attached images ride this turn in
+                # OpenAI shape (the gateway converts per provider). Plain string when no images.
+                user_content = self._build_uni_human_content(prompt, images)
+                uni_conversation_history.append({"role": "user", "content": user_content})
+                # PARITY (round 3): the mirror gets a DEEP COPY of the multimodal block list —
+                # sharing the same list object between the uni dict and the HumanMessage means
+                # a mutation through either side (or through to_uni_messages' pass-through of
+                # these blocks on a later bootstrap) would corrupt the other. Strings are
+                # immutable, so only the list shape needs copying.
+                langchain_conversation_history.append(_stamp_ts(HumanMessage(
+                    content=deepcopy(user_content) if isinstance(user_content, list) else user_content
+                )))
+                if heaven_main_callback:
+                    heaven_main_callback(langchain_conversation_history[-1])
+        # PARITY (mirrors run_langchain's continuation handling): a continuation overrides
+        # max_iterations. (run_langchain additionally sets `self.current_iterations = 1` —
+        # note the plural: a dead attribute, so current_iteration is NOT actually reset
+        # there either; that no-op is intentionally not replicated.)
+        if self.continuation_iterations != 0:
+            self.max_iterations = self.continuation_iterations
 
         # Resolve MCP tools before preparing for API
         await self.resolve_mcps()
@@ -3959,169 +3839,318 @@ You must fix the error before proceeding."""
         openai_tools = self._prepare_tools_for_uni_api()
         self.blocked = False
 
-        # ---------- 1.  Iteration loop ----------
-        while self.current_iteration <= self.max_iterations:
-            tool_call_count = 0
-            self._cleanse_dangling_tool_calls(
-                uni_conversation_history, langchain_conversation_history, "MULTIPLE_TOOL_CALLS"
-            )
+        # PARITY: DUO deprecated by design (2026-07-10) — intentionally absent here (docs/UNI-PARITY.md row 22)
 
-            if self.goal:
-                agent_prompt = self._format_agent_prompt()
-                uni_conversation_history.append({"role": "user", "content": agent_prompt})
-                langchain_conversation_history.append(HumanMessage(content=agent_prompt))
+        # Fire BEFORE_RUN hook
+        self._fire_hook(HookPoint.BEFORE_RUN, prompt=prompt or "")
 
-            payload = {
-                "max_tokens": getattr(self.config, "max_tokens", 4000),
-                "temperature": getattr(self.config, "temperature", 0.7),
-                "parallel_tool_calls": False,
-            }
-            if openai_tools:
-                payload["tools"] = openai_tools
-                payload["tool_choice"] = "auto"
+        try:
+            # ---------- 1.  Iteration loop ----------
+            while self.current_iteration <= self.max_iterations:
+                # Fire BEFORE_ITERATION hook
+                self._fire_hook(HookPoint.BEFORE_ITERATION, iteration=self.current_iteration)
+                # PARITY (docs/UNI-PARITY.md rows 6-9): refresh the system prompt at iteration
+                # start (twofold devdir mechanism, part 1) and sync both histories' slot 0.
+                self.refresh_system_prompt()
+                _sync_system_slot()
 
-            result = self.unified_chat.invoke_uni_api(
-                model=self.config.model, uni_messages=uni_conversation_history, **payload
-            )
-            assistant_message = result["choices"][0]["message"]
-
-            # ---------- 2.  Single-tool clamp ----------
-            self._cleanse_dangling_tool_calls([assistant_message], [], "MULTIPLE_TOOL_CALLS")
-
-            # ---------- 3.  Tool-call branch ----------
-            if assistant_message.get("tool_calls"):
-                if assistant_message.get("content") is None:
-                    assistant_message["content"] = ""
-
-                uni_conversation_history.append(assistant_message)
-                langchain_conversation_history.append(
-                    AIMessage(content="", additional_kwargs={"tool_calls": assistant_message["tool_calls"]})
+                tool_call_count = 0
+                self._cleanse_dangling_tool_calls(
+                    uni_conversation_history, langchain_conversation_history, "MULTIPLE_TOOL_CALLS"
                 )
-                if output_callback:
-                    output_callback(langchain_conversation_history[-1])
-                if heaven_main_callback:
-                    heaven_main_callback(langchain_conversation_history[-1])
 
-                while assistant_message.get("tool_calls") and tool_call_count < self.max_tool_calls:
-                    # execute the (single) tool call
-                    tool_messages = await self._execute_tool_calls_uni(
-                        assistant_message["tool_calls"], tool_output_callback
-                    )
-                    uni_conversation_history.extend(tool_messages)
-                    for tm in tool_messages:
-                        langchain_conversation_history.append(
-                            ToolMessage(content=tm["content"], tool_call_id=tm["tool_call_id"])
-                        )
+                # PARITY (mirrors run_langchain): continuation runs also get the formatted
+                # agent prompt (_format_agent_prompt consumes continuation_prompt).
+                if self.goal or self.continuation_prompt:
+                    agent_prompt = self._format_agent_prompt()
+                    uni_conversation_history.append({"role": "user", "content": agent_prompt})
+                    langchain_conversation_history.append(_stamp_ts(HumanMessage(content=agent_prompt)))
+                    if heaven_main_callback:
+                        heaven_main_callback(langchain_conversation_history[-1])
 
-                    # Check if WriteBlockReportTool was called and auto-inject response
-                    if self.blocked:
-                        # Extract the required response from WriteBlockReportTool result
-                        for tm in tool_messages:
-                            if tm.get("name") == "WriteBlockReportTool":
-                                response_msg = "I've created a block report and am waiting for the help I need"
-                                
-                                # Add to uni conversation layer
-                                uni_conversation_history.append({
-                                    "role": "assistant", 
-                                    "content": response_msg
-                                })
-                                
-                                # Add to langchain layer  
-                                langchain_conversation_history.append(
-                                    AIMessage(content=response_msg)
-                                )
-                                break
-                        break
+                payload = {
+                    "max_tokens": getattr(self.config, "max_tokens", 4000),
+                    # PARITY (docs/UNI-PARITY.md row 20): parallel tool calls disabled by design —
+                    # the uni-api gateway has a multiple-tool-call bug.
+                    "parallel_tool_calls": False,
+                }
+                # PARITY (docs/UNI-PARITY.md row 23): omit temperature when None — some models
+                # 400 on ANY explicit temperature (mirrors the model_params build for langchain).
+                if self.config.temperature is not None:
+                    payload["temperature"] = self.config.temperature
+                if openai_tools:
+                    payload["tools"] = openai_tools
+                    payload["tool_choice"] = "auto"
+                # PARITY (docs/UNI-PARITY.md row 26): merge extra_model_kwargs into the payload.
+                # PARITY: thinking_budget superseded by provider effort levels — pass reasoning
+                # params via extra_model_kwargs (docs/UNI-PARITY.md row 25)
+                # PARITY: model is fixed by config.model; override via config, not
+                # extra_model_kwargs — a "model" key here would collide with the explicit
+                # model= argument to invoke_uni_api (TypeError: multiple values).
+                if self.config.extra_model_kwargs:
+                    payload.update({k: v for k, v in self.config.extra_model_kwargs.items()
+                                    if k != "model"})
 
-                    tool_result = self.unified_chat.invoke_uni_api(
-                        model=self.config.model, uni_messages=uni_conversation_history, **payload
-                    )
-                    assistant_message = tool_result["choices"][0]["message"]
-                    
-                    # ---------- 4.  Clamp again / MAX_TOOL_CALLS ----------
-                    cancelled_tools = []  # Initialize to prevent NameError
-                    if tool_call_count + 1 >= self.max_tool_calls and assistant_message.get("tool_calls"):
-                        cancelled_tools = [
-                            f"{tc['function']['name']}({tc['function']['arguments']})"
-                            for tc in assistant_message["tool_calls"]
-                        ]
-                        assistant_message.pop("tool_calls", None)  # strip them but keep same dict
-                    else:
-                        self._cleanse_dangling_tool_calls([assistant_message], [], "MULTIPLE_TOOL_CALLS")
+                # PARITY (docs/UNI-PARITY.md row 10): auto-compact before every model call.
+                uni_conversation_history, langchain_conversation_history = await self._maybe_compact_uni(
+                    uni_conversation_history, langchain_conversation_history
+                )
 
+                result = self.unified_chat.invoke_uni_api(
+                    model=self.config.model, uni_messages=uni_conversation_history, **payload
+                )
+                self._consume_uni_usage(result)
+                assistant_message = result["choices"][0]["message"]
+
+                # ---------- 2.  Single-tool clamp ----------
+                # PARITY (docs/UNI-PARITY.md row 20): intentional divergence from run_langchain's
+                # parallel tool execution — one tool call per round-trip.
+                self._cleanse_dangling_tool_calls([assistant_message], [], "MULTIPLE_TOOL_CALLS")
+
+                # ---------- 3.  Tool-call branch ----------
+                if assistant_message.get("tool_calls"):
                     if assistant_message.get("content") is None:
                         assistant_message["content"] = ""
-                    result = assistant_message
+
                     uni_conversation_history.append(assistant_message)
+                    # PARITY FIX (2026-07-10 round 2, CRITICAL-1): mirror via from_uni_messages —
+                    # the SAME conversion the mid-tool-loop append uses — so the assistant's TEXT
+                    # rides into the LC history alongside its tool_calls. The previous
+                    # AIMessage(content="") mirror DROPPED the text from the persisted history
+                    # (and omitted the LC-native tool_calls field) while the uni side kept it —
+                    # a dual-history divergence.
                     langchain_conversation_history.append(
-                        self.history.from_uni_messages([assistant_message]).messages[0]
+                        _stamp_ts(self.history.from_uni_messages([assistant_message]).messages[0])
                     )
                     if output_callback:
                         output_callback(langchain_conversation_history[-1])
                     if heaven_main_callback:
-                        heaven_main_callback(assistant_message)
+                        heaven_main_callback(langchain_conversation_history[-1])
+                    # PARITY (mirrors run_langchain): process response text at arrival — even on
+                    # tool-call turns — for agent bookkeeping + additional_kws extraction.
+                    if assistant_message.get("content"):
+                        self._process_agent_response(assistant_message["content"])
 
-                    tool_call_count += 1
+                    while assistant_message.get("tool_calls") and tool_call_count < self.max_tool_calls:
+                        # execute the (single) tool call
+                        tool_messages = await self._execute_tool_calls_uni(
+                            assistant_message["tool_calls"], tool_output_callback
+                        )
+                        uni_conversation_history.extend(tool_messages)
+                        for tm in tool_messages:
+                            if tm["role"] == "tool":
+                                langchain_conversation_history.append(
+                                    _stamp_ts(ToolMessage(content=tm["content"], tool_call_id=tm["tool_call_id"]))
+                                )
+                            else:
+                                # role == "user": tool-result image follow-up turn emitted by
+                                # _execute_tool_calls_uni (PARITY docs/UNI-PARITY.md row 16).
+                                # deepcopy: never share block-list objects between the uni dict
+                                # and the LC mirror (same aliasing hardening as the user turn).
+                                langchain_conversation_history.append(
+                                    _stamp_ts(HumanMessage(content=deepcopy(tm["content"])))
+                                )
+                            # PARITY (mirrors run_langchain): heaven_main_callback sees tool
+                            # results too, not only assistant turns.
+                            if heaven_main_callback:
+                                heaven_main_callback(langchain_conversation_history[-1])
 
-                    if tool_call_count >= self.max_tool_calls:
-                        break_message = {
-                            "role": "assistant",
-                            "content": (
-                                f"⚠️🛑☠️ Maximum consecutive tool calls ({self.max_tool_calls}) "
-                                f"reached after agent mode iteration {self.current_iteration}. "
-                                f"I tried to call [{', '.join(cancelled_tools)}] but they were "
-                                "cancelled by the system. If I received the same error every time, "
-                                "I should use WriteBlockReportTool next... Waiting for next agent "
-                                "mode iteration."
-                            ),
-                        }
-                        uni_conversation_history.append(break_message)
+                        # Check if WriteBlockReportTool was called and auto-inject response
+                        if self.blocked:
+                            # Extract the required response from WriteBlockReportTool result
+                            # PARITY (round 3): case-insensitive — tm["name"] carries the
+                            # model's casing (tool lookup matches .lower(); see
+                            # _execute_tool_calls_uni's detection note).
+                            for tm in tool_messages:
+                                if (tm.get("name") or "").lower() == "writeblockreporttool":
+                                    response_msg = "I've created a block report and am waiting for the help I need"
+
+                                    # Add to uni conversation layer
+                                    uni_conversation_history.append({
+                                        "role": "assistant",
+                                        "content": response_msg
+                                    })
+
+                                    # Add to langchain layer
+                                    langchain_conversation_history.append(
+                                        _stamp_ts(AIMessage(content=response_msg))
+                                    )
+                                    # PARITY: callbacks fire on every assistant append,
+                                    # including this uni-only blocked auto-injection.
+                                    if output_callback:
+                                        output_callback(langchain_conversation_history[-1])
+                                    if heaven_main_callback:
+                                        heaven_main_callback(langchain_conversation_history[-1])
+                                    break
+                            break
+
+                        # PARITY (docs/UNI-PARITY.md rows 6-8): refresh the system prompt BEFORE
+                        # showing the agent the tool result (twofold devdir mechanism, part 2 —
+                        # mirrors run_langchain's mid-tool-loop refresh). The AFTER_TOOL_CALL
+                        # tracker (fired inside _execute_tool_calls_uni above) already set
+                        # self._active_work_dir to the dir the agent just read/bashed into;
+                        # refreshing HERE loads that dir's rules (+ any skillmanager_persona=
+                        # declaration) into the system prompt so the invoke below sees the tool
+                        # result WITH the just-entered dir's context already loaded.
+                        self.refresh_system_prompt()
+                        _sync_system_slot()
+
+                        # PARITY (docs/UNI-PARITY.md row 10): auto-compact before every model call.
+                        uni_conversation_history, langchain_conversation_history = await self._maybe_compact_uni(
+                            uni_conversation_history, langchain_conversation_history
+                        )
+
+                        tool_result = self.unified_chat.invoke_uni_api(
+                            model=self.config.model, uni_messages=uni_conversation_history, **payload
+                        )
+                        self._consume_uni_usage(tool_result)
+                        assistant_message = tool_result["choices"][0]["message"]
+
+                        # ---------- 4.  Clamp again / MAX_TOOL_CALLS ----------
+                        cancelled_tools = []  # Initialize to prevent NameError
+                        if tool_call_count + 1 >= self.max_tool_calls and assistant_message.get("tool_calls"):
+                            cancelled_tools = [
+                                f"{tc['function']['name']}({tc['function']['arguments']})"
+                                for tc in assistant_message["tool_calls"]
+                            ]
+                            assistant_message.pop("tool_calls", None)  # strip them but keep same dict
+                        else:
+                            # PARITY (docs/UNI-PARITY.md row 20): single-tool clamp (intentional).
+                            self._cleanse_dangling_tool_calls([assistant_message], [], "MULTIPLE_TOOL_CALLS")
+
+                        if assistant_message.get("content") is None:
+                            assistant_message["content"] = ""
+                        # PARITY FIX (2026-07-10 round 2): raw_response is ALWAYS the full gateway
+                        # response (was reassigned to the bare message dict here, so the return
+                        # shape differed between tool-loop and text-only runs). tool_result's
+                        # choices[0].message IS assistant_message (same dict), so the single-tool
+                        # clamp / MAX_TOOL_CALLS strip above stay reflected.
+                        result = tool_result
+                        uni_conversation_history.append(assistant_message)
                         langchain_conversation_history.append(
-                            self.history.from_uni_messages([break_message]).messages[0]
+                            _stamp_ts(self.history.from_uni_messages([assistant_message]).messages[0])
                         )
                         if output_callback:
                             output_callback(langchain_conversation_history[-1])
-                        break
+                        if heaven_main_callback:
+                            # PARITY FIX (2026-07-10 round 2): pass the mirrored LC message —
+                            # every other call site does; this one leaked the raw uni dict.
+                            heaven_main_callback(langchain_conversation_history[-1])
+                        # PARITY (mirrors run_langchain's mid-tool-loop processing): agent
+                        # bookkeeping + additional_kws extraction on every response at arrival.
+                        if assistant_message.get("content"):
+                            self._process_agent_response(assistant_message["content"])
 
-            # ---------- 5.  Text-only branch ----------
-            else:
-                if assistant_message.get("content") is None:
-                    assistant_message["content"] = ""
-                uni_conversation_history.append(assistant_message)
-                langchain_conversation_history.append(
-                    self.history.from_uni_messages([assistant_message]).messages[0]
+                        tool_call_count += 1
+
+                        if tool_call_count >= self.max_tool_calls:
+                            break_message = {
+                                "role": "assistant",
+                                "content": (
+                                    f"⚠️🛑☠️ Maximum consecutive tool calls ({self.max_tool_calls}) "
+                                    f"reached after agent mode iteration {self.current_iteration}. "
+                                    f"I tried to call [{', '.join(cancelled_tools)}] but they were "
+                                    "cancelled by the system. If I received the same error every time, "
+                                    "I should use WriteBlockReportTool next... Waiting for next agent "
+                                    "mode iteration."
+                                ),
+                            }
+                            uni_conversation_history.append(break_message)
+                            langchain_conversation_history.append(
+                                _stamp_ts(self.history.from_uni_messages([break_message]).messages[0])
+                            )
+                            if output_callback:
+                                output_callback(langchain_conversation_history[-1])
+                            break
+
+                # ---------- 5.  Text-only branch ----------
+                else:
+                    if assistant_message.get("content") is None:
+                        assistant_message["content"] = ""
+                    uni_conversation_history.append(assistant_message)
+                    langchain_conversation_history.append(
+                        _stamp_ts(self.history.from_uni_messages([assistant_message]).messages[0])
+                    )
+                    if output_callback:
+                        output_callback(langchain_conversation_history[-1])
+                    if heaven_main_callback:
+                        heaven_main_callback(langchain_conversation_history[-1])
+                    # PARITY (mirrors run_langchain): process response text at arrival
+                    # regardless of goal — drives additional_kws extraction in chat mode.
+                    if assistant_message.get("content"):
+                        self._process_agent_response(assistant_message["content"])
+
+                # ---------- 6.  Agent-mode bookkeeping ----------
+                # PARITY (2026-07-10 round 2): each response is now processed exactly once at
+                # arrival (all three append sites above). run_langchain ADDITIONALLY re-processes
+                # the iteration's FIRST response here when in goal mode — a double-extraction
+                # quirk (duplicate `{kw}_2` entries) intentionally NOT replicated; see
+                # docs/UNI-PARITY.md row 34.
+
+                self._cleanse_dangling_tool_calls(
+                    uni_conversation_history, langchain_conversation_history, "MAX_TOOL_CALLS"
                 )
-                if output_callback:
-                    output_callback(langchain_conversation_history[-1])
-                if heaven_main_callback:
-                    heaven_main_callback(langchain_conversation_history[-1])
 
-            # ---------- 6.  Agent-mode bookkeeping ----------
-            if self.goal and assistant_message.get("content"):
-                self._process_agent_response(assistant_message["content"])
+                # PARITY (mirrors run_langchain): a blocked iteration exits BEFORE
+                # AFTER_ITERATION fires and without incrementing current_iteration.
+                if self.blocked:
+                    break
 
-            self._cleanse_dangling_tool_calls(
-                uni_conversation_history, langchain_conversation_history, "MAX_TOOL_CALLS"
-            )
+                # Fire AFTER_ITERATION hook
+                self._fire_hook(HookPoint.AFTER_ITERATION, iteration=self.current_iteration)
 
-            self.current_iteration += 1
-            if self.current_task == "GOAL ACCOMPLISHED" or not self.goal or self.blocked:
-                break
+                self.current_iteration += 1
+                if self.current_task == "GOAL ACCOMPLISHED" or not self.goal:
+                    break
 
-        # ---------- 7.  Persist history ----------
-        self.history.messages = langchain_conversation_history
-        self.history.agent_status = self.save_status()
-        saved_history_id = self.history.save(self.name)
+            # Fire AFTER_RUN hook (before persisting history — mirrors run_langchain)
+            self._fire_hook(HookPoint.AFTER_RUN, iteration=self.current_iteration)
 
-        return {
-            "history": self.history,
-            "history_id": saved_history_id,
-            "agent_name": self.name,
-            "agent_status": self.history.agent_status,
-            "uni_api_used": True,
-            "context_window_status": self.context_window_config.get_status(),
-            "raw_response": result,
-        }
+            # ---------- 7.  Persist history ----------
+            self.history.messages = langchain_conversation_history
+            try:
+                self.history.agent_status = self.save_status()
+                saved_history_id = self.history.save(self.name)
+                # PARITY (2026-07-10 round 2, mirrors run_langchain): post-save subclass hook —
+                # AutoSummarizing/PhaseDetector/ConceptResolver agents override this to harvest
+                # their tool calls from the saved history. Was never fired on the uni path.
+                self.look_for_particular_tool_calls()
+                return {
+                    "history": self.history,
+                    "history_id": saved_history_id,
+                    "agent_name": self.name,
+                    "agent_status": self.history.agent_status,
+                    "uni_api_used": True,
+                    "context_window_status": self.context_window_config.get_status(),
+                    "raw_response": result,
+                }
+            except Exception as save_error:
+                # PARITY (docs/UNI-PARITY.md row 12): save-on-failure fallback (mirrors
+                # run_langchain's save_error path).
+                print(f"Warning: Failed to save history for agent {self.name}: {save_error}")
+                return {
+                    "history": self.history,
+                    "history_id": getattr(self.history, 'history_id', "No history ID"),
+                    "agent_name": self.name,
+                    "save_error": str(save_error),
+                    "agent_status": self.save_status(),
+                    "uni_api_used": True,
+                    "context_window_status": self.context_window_config.get_status(),
+                    "raw_response": result,
+                }
+
+        except Exception as e:
+            # PARITY (docs/UNI-PARITY.md rows 5, 12): fire ON_ERROR, then best-effort history
+            # save so a mid-run exception doesn't lose the conversation (mirrors
+            # run_langchain's save_error fallback shape), then re-raise.
+            self._fire_hook(HookPoint.ON_ERROR, error=e)
+            try:
+                self.history.messages = langchain_conversation_history
+                self.history.agent_status = self.save_status()
+                self.history.save(self.name)
+            except Exception as save_error:
+                print(f"Warning: Failed to save history for agent {self.name}: {save_error}")
+            raise RuntimeError(f"Agent run failed: {str(e)}") from e
 
 
   ###
