@@ -2,6 +2,10 @@
 
 All notable publishes of this repo. Auto-maintained on publish.
 
+## 0a2be3df — 2026-07-29
+
+- Published from monorepo.
+
 ## 61ea89e7 — 2026-07-17
 
 - Published from monorepo.
