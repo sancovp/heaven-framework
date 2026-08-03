@@ -154,10 +154,11 @@ def _default_in(d: Path) -> List[Path]:
 
 
 def _rules_in(d: Path) -> List[Path]:
-    """`*.md` in a bare rules dir (the level wrapper adds the level-root instruction files)."""
+    """`**/*.md` in a rules dir — RECURSIVE into subdirectories (CC parity: processMdRules
+    recurses; CLAUDE-PARITY §2). The level wrapper adds the level-root instruction files."""
     if not d.is_dir():
         return []
-    return sorted(d.glob("*.md"))
+    return sorted(p for p in d.rglob("*.md") if p.is_file())
 
 
 SLOT_DIR_GRAMMARS = {

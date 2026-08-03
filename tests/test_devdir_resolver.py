@@ -76,6 +76,16 @@ def test_never_seen_slot_default_grammar(world):
     assert all(isinstance(f, DevdirFile) for f in mine)
 
 
+def test_rules_recurse_into_subdirs(world):
+    # CC parity (CLAUDE-PARITY §2): processMdRules recurses — so do we.
+    nested = world / "repo" / ".heaven" / "rules" / "deep"
+    nested.mkdir()
+    (nested / "nested_rule.md").write_text("a nested rule")
+    files = resolve(world / "repo", None, "rules")
+    names = {os.path.basename(f.path) for f in files if f.source.root == "launch"}
+    assert "nested_rule.md" in names
+
+
 def test_content_dedup(world):
     dup = world / "repo" / ".heaven" / "rules" / "r1_copy.md"
     dup.write_text("repo rule one")     # identical body
