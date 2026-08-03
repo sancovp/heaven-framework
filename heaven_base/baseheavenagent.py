@@ -26,6 +26,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, Base
 from langchain_core.tools import BaseTool, StructuredTool
 from langchain_core.utils.json_schema import dereference_refs
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from . import devdir
 from .unified_chat import UnifiedChat, ProviderEnum
 from .baseheaventool import BaseHeavenTool, ToolResult, CLIResult, ToolError
 from .tools.write_block_report_tool import WriteBlockReportTool
@@ -180,7 +181,7 @@ PER_DEVDIR_FILE_CHARS = 40_000
 TOTAL_DEVDIR_CHARS = 400_000
 PER_DEVDIR_SKILL_DESC_CHARS = 600
 MAX_DEVDIR_SKILLS = 300
-_MAX_DEVDIR_WALKUP = 12
+_MAX_DEVDIR_WALKUP = devdir.MAX_DEVDIR_WALKUP
 
 
 def _file_hash(content: str) -> str:
@@ -220,14 +221,8 @@ def _extract_tool_path(tool_name: str, tool_args: Optional[dict]) -> Optional[st
     return None
 
 
-def _dir_has_devdir(d: Path) -> bool:
-    """True if `d` carries any devdir marker: a `.claude/` or `.heaven/` dir, or a root CLAUDE.md/AGENTS.md.
-    This is the devdir-chain walk boundary — climb while the PARENT has one, stop when it does not."""
-    try:
-        return ((d / ".claude").is_dir() or (d / ".heaven").is_dir()
-                or (d / "CLAUDE.md").is_file() or (d / "AGENTS.md").is_file())
-    except Exception:
-        return False
+# The walk lives in heaven_base/devdir.py (THE ONE RESOLVER) — this module consumes it.
+_dir_has_devdir = devdir.dir_has_devdir
 
 
 # Persona declaration directives — a persona FORCED via a line in ANY loaded instruction surface (a
@@ -1410,44 +1405,9 @@ You must fix the error before proceeding."""
         return [tool.base_tool if hasattr(tool, 'base_tool') else tool for tool in self.tools]
 
     def _devdir_levels(self, start: Optional[Union[str, Path]] = None) -> list[Path]:
-        """Return the devdir-bearing ancestor dirs that apply to `start`, root-first (nearest refines
-        last). Two phases (Isaac 2026-07-09; NOT bounded by `.git` — that stop was wrong):
-          1. ENTER: from `start` (or cwd), climb to the NEAREST ancestor that HAS a devdir (`_dir_has_devdir`
-             = .claude/.heaven/ or CLAUDE.md/AGENTS.md) — skipping a leading run of non-devdir dirs, so an
-             agent working DEEP in a repo whose .claude lives only at the root still reaches the root.
-          2. CLIMB: from that entry, keep going up while the PARENT also has a devdir; STOP at the first
-             parent with NO devdir (a gap ABOVE the entry ends the chain — we do not jump over it).
-        `_MAX_DEVDIR_WALKUP` caps each phase. (Persona overrides `force`/`absolute` would widen the phase-2
-        boundary — not wired yet.) If no devdir exists anywhere up the chain, returns just `start`."""
-        current = Path(start or os.getcwd()).expanduser()
-        try:
-            current = current.resolve()
-        except Exception:
-            current = current.absolute()
-        if current.is_file():
-            current = current.parent
-        # Phase 1 — climb to the nearest devdir-bearing ancestor (the entry onto the chain).
-        entry = None
-        probe = current
-        for _ in range(_MAX_DEVDIR_WALKUP):
-            if _dir_has_devdir(probe):
-                entry = probe
-                break
-            if probe.parent == probe:
-                break
-            probe = probe.parent
-        if entry is None:
-            return [current]
-        # Phase 2 — from the entry, climb the CONTIGUOUS chain while each parent has a devdir.
-        chain = [entry]
-        cur = entry
-        for _ in range(_MAX_DEVDIR_WALKUP):
-            parent = cur.parent
-            if parent == cur or not _dir_has_devdir(parent):
-                break
-            chain.append(parent)
-            cur = parent
-        return list(reversed(chain))
+        """The ENTER+CLIMB ancestor walk — delegated to `devdir.devdir_levels` (THE ONE walk;
+        its docstring carries the two-phase semantics). Kept as a method for existing callers."""
+        return devdir.devdir_levels(start or os.getcwd())
 
     def _iter_devdir_instruction_files(self, level: Path, devdir_name: str) -> list[Path]:
         if devdir_name == ".claude":
