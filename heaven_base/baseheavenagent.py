@@ -188,13 +188,6 @@ def _file_hash(content: str) -> str:
     return hashlib.md5(content.encode("utf-8", "ignore")).hexdigest()
 
 
-def _read_text_best_effort(path: Path) -> Optional[str]:
-    try:
-        return path.read_text()
-    except Exception:
-        return None
-
-
 _ACTIVE_DIR_PATH_KEYS = ("path", "file_path", "filename", "file", "directory", "cwd")
 
 
@@ -1409,37 +1402,6 @@ You must fix the error before proceeding."""
         its docstring carries the two-phase semantics). Kept as a method for existing callers."""
         return devdir.devdir_levels(start or os.getcwd())
 
-    def _iter_devdir_instruction_files(self, level: Path, devdir_name: str) -> list[Path]:
-        if devdir_name == ".claude":
-            files = [level / "CLAUDE.md", level / ".claude" / "CLAUDE.md"]
-            rules_dir = level / ".claude" / "rules"
-        else:
-            files = [
-                level / "AGENTS.md",
-                level / "CLAUDE.md",
-                level / ".heaven" / "AGENTS.md",
-                level / ".heaven" / "CLAUDE.md",
-            ]
-            rules_dir = level / ".heaven" / "rules"
-        if rules_dir.is_dir():
-            files.extend(sorted(rules_dir.glob("*.md")))
-        return [p for p in files if p.is_file()]
-
-    def _iter_devdir_skill_files(self, level: Path, devdir_name: str) -> list[Path]:
-        skill_dir = level / devdir_name / "skills"
-        if not skill_dir.is_dir():
-            return []
-        return sorted(skill_dir.glob("*/SKILL.md")) + sorted(skill_dir.glob("*.md"))
-
-    def _iter_devdir_hook_files(self, level: Path, devdir_name: str) -> list[Path]:
-        hooks_dir = level / devdir_name / "hooks"
-        if not hooks_dir.is_dir():
-            return []
-        return [
-            p for p in sorted(hooks_dir.glob("*.py"))
-            if not p.name.startswith(("_", "."))
-        ]
-
     def _resolve_hook_point(self, value):
         if isinstance(value, HookPoint):
             return value
@@ -1515,7 +1477,7 @@ You must fix the error before proceeding."""
         """AFTER_TOOL_CALL hook: set the SINGLE current working dir from the dir a Read/Bash touched, so
         resolve_devdirs loads its rules. It SWAPS — moving to a new dir REPLACES the old one, so a dir's
         devdir rules GO AWAY when the agent leaves it (mirrors how a CLAUDE.md is active only while you are
-        in that dir). The configured/launch cwd is always-on separately (see _resolve_devdir_roots).
+        in that dir). The configured/launch cwd is always-on separately (devdir.resolve's launch root).
         Best-effort — NEVER raises (a tracking failure must not break a run)."""
         try:
             path = _extract_tool_path(getattr(ctx, "tool_name", ""), getattr(ctx, "tool_args", None))
@@ -1527,37 +1489,15 @@ You must fix the error before proceeding."""
         except Exception:
             pass
 
-    def _resolve_devdir_roots(self, start: Optional[Union[str, Path]] = None) -> list[Path]:
-        """Ordered, de-duped dir LEVELS to load devdir context from: the ALWAYS-ON configured/launch cwd's
-        ancestry PLUS the ancestry of the SINGLE current dir the agent is working in (its most recent
-        read/bash — this SWAPS on move, so leaving a dir drops its rules) PLUS an explicit `start` if a
-        caller passes one. `getattr` defaults keep this safe for object.__new__ test agents that never ran
-        __init__."""
-        roots: list[str] = [getattr(self, "_configured_cwd", None) or os.getcwd()]
-        active = getattr(self, "_active_work_dir", None)
-        if active and active not in roots:
-            roots.append(active)
-        if start is not None and str(start) not in roots:
-            roots.append(str(start))
-        levels: list[Path] = []
-        seen: set[str] = set()
-        for root in roots:
-            for level in self._devdir_levels(root):
-                key = str(level)
-                if key in seen:
-                    continue
-                seen.add(key)
-                levels.append(level)
-        return levels
-
     def resolve_devdirs(self, system_prompt: str, start: Optional[Union[str, Path]] = None) -> str:
         """Resolve .claude then .heaven devdirs before the system prompt is rendered.
 
-        Walks MULTIPLE roots (via _resolve_devdir_roots): the configured/launch cwd's ancestry AND the
-        ancestry of every dir the agent has READ/BASHED into (so it loads both its own AIOS rules and the
-        rules of the repo it is working in). At each level it gathers .claude first, then .heaven, drops
-        identical file bodies, injects rules/instructions and skill summaries, and registers hook files
-        into this agent's HookRegistry.
+        ALL file-finding goes through `devdir.resolve` (THE ONE RESOLVER — heaven_base/devdir.py):
+        launch_dir = the configured/launch cwd (always-on), cwd = the single dir the agent last
+        READ/BASHED into (swaps on move, so leaving a dir drops its rules), slot per surface. This
+        method is the CONSUMER: it applies the caps + skip notices (the 400k total is a SEMANTIC
+        ALARM — never engineered around), scans persona directives, renders the instruction and
+        skill blocks, and registers hook files into this agent's HookRegistry.
         """
         current = re.sub(r'\n*<DEVDIR_CONTEXT\b.*?</DEVDIR_CONTEXT>', '', system_prompt, flags=re.DOTALL)
         current = re.sub(r'\n*<AVAILABLE_SKILLS>.*?</AVAILABLE_SKILLS>', '', current, flags=re.DOTALL)
@@ -1570,61 +1510,39 @@ You must fix the error before proceeding."""
         if _pd:
             self._forced_persona, self._forced_persona_absolute = _pd
 
-        seen_instruction_hashes: set[str] = set()
-        seen_skill_hashes: set[str] = set()
-        seen_hook_hashes: set[str] = set()
         instruction_parts: list[str] = []
         skill_summaries: list[dict] = []
         notices: list[str] = []
         total_chars = 0
 
-        for level in self._resolve_devdir_roots(start):
-            for devdir_name in (".claude", ".heaven"):
-                for path in self._iter_devdir_instruction_files(level, devdir_name):
-                    content = _read_text_best_effort(path)
-                    if content is None:
-                        continue
-                    _pd = _scan_persona_directive(content)   # sticky: a declaration in any surface forces it
-                    if _pd:
-                        self._forced_persona, self._forced_persona_absolute = _pd
-                    digest = _file_hash(content)
-                    if digest in seen_instruction_hashes:
-                        continue
-                    seen_instruction_hashes.add(digest)
-                    if len(content) > PER_DEVDIR_FILE_CHARS:
-                        notices.append(f"{path} skipped: exceeds {PER_DEVDIR_FILE_CHARS} chars")
-                        continue
-                    if total_chars + len(content) > TOTAL_DEVDIR_CHARS:
-                        notices.append(f"{path} skipped: devdir context would exceed {TOTAL_DEVDIR_CHARS} chars")
-                        continue
-                    total_chars += len(content)
-                    instruction_parts.append(f"### [from {path}]\n{content.strip()}")
+        launch = getattr(self, "_configured_cwd", None) or os.getcwd()
+        active = getattr(self, "_active_work_dir", None)
+        extra = (start,) if start is not None else ()
 
-                for path in self._iter_devdir_skill_files(level, devdir_name):
-                    content = _read_text_best_effort(path)
-                    if content is None:
-                        continue
-                    digest = _file_hash(content)
-                    if digest in seen_skill_hashes:
-                        continue
-                    seen_skill_hashes.add(digest)
-                    skill_summaries.append(_parse_skill_summary(path, content[:4000]))
-                    if len(skill_summaries) >= MAX_DEVDIR_SKILLS:
-                        notices.append(f"skill scan stopped at {MAX_DEVDIR_SKILLS} skills")
-                        break
+        for f in devdir.resolve(launch, active, "rules", extra_roots=extra):
+            _pd = _scan_persona_directive(f.content)   # sticky: a declaration in any surface forces it
+            if _pd:
+                self._forced_persona, self._forced_persona_absolute = _pd
+            if len(f.content) > PER_DEVDIR_FILE_CHARS:
+                notices.append(f"{f.path} skipped: exceeds {PER_DEVDIR_FILE_CHARS} chars")
+                continue
+            if total_chars + len(f.content) > TOTAL_DEVDIR_CHARS:
+                notices.append(f"{f.path} skipped: devdir context would exceed {TOTAL_DEVDIR_CHARS} chars")
+                continue
+            total_chars += len(f.content)
+            instruction_parts.append(f"### [from {f.path}]\n{f.content.strip()}")
 
-                for path in self._iter_devdir_hook_files(level, devdir_name):
-                    content = _read_text_best_effort(path)
-                    if content is None:
-                        continue
-                    digest = _file_hash(content)
-                    if digest in seen_hook_hashes:
-                        continue
-                    seen_hook_hashes.add(digest)
-                    try:
-                        self._register_devdir_hook_file(path)
-                    except Exception as exc:
-                        notices.append(f"{path} hook skipped: {exc}")
+        for f in devdir.resolve(launch, active, "skills", extra_roots=extra):
+            skill_summaries.append(_parse_skill_summary(Path(f.path), f.content[:4000]))
+            if len(skill_summaries) >= MAX_DEVDIR_SKILLS:
+                notices.append(f"skill scan stopped at {MAX_DEVDIR_SKILLS} skills")
+                break
+
+        for f in devdir.resolve(launch, active, "hooks", extra_roots=extra):
+            try:
+                self._register_devdir_hook_file(Path(f.path))
+            except Exception as exc:
+                notices.append(f"{f.path} hook skipped: {exc}")
 
         skill_summaries.extend(self._equipped_skill_summaries())
 

@@ -4,13 +4,10 @@ Injects the AVAILABLE-SKILLS catalog (name + description + path) into the SYSTEM
 knows what skills it has, with zero dependencies. Progressive disclosure: only name/description/path are
 injected; the agent READS the full SKILL.md on demand (so the catalog stays cheap even with many skills).
 
-Scans both skill layouts, deduped by name:
-  - `<dir>/*/SKILL.md`   (the Claude-Code-plugin / heaven dir form)
-  - `<dir>/*.md`          (the flat form the ONION morph system scaffolds)
-across these roots:
-  - `$HEAVEN_DATA_DIR/skills`     (global heaven skills)
-  - `<cwd>/.heaven/skills`        (dir-relative — what ONION writes)
-  - `~/.heaven/skills`            (user-global)
+FILE-FINDING = `heaven_base.devdir` (THE ONE RESOLVER): `devdir.resolve(cwd, None, "skills")` — the
+user root (`~/.claude` + `~/.heaven`) always-on plus the cwd's ancestor walk — plus a
+`devdir.scan_slot_dir` over `$HEAVEN_DATA_DIR/skills` (the registry-bind store, not a devdir level).
+Name collisions: NEAREST WINS (the D1 project-wins ruling) — the resolver list is iterated reversed.
 
 One hook: a BEFORE_SYSTEM_PROMPT renderer, idempotent (strip the prior block, re-append) and hot (re-scan
 each turn). This is the dep-free alternative to heaven's native `make_skill_description_hook`, which uses
@@ -19,11 +16,11 @@ aren't using equip/list; we only need the skills to auto-load.
 """
 import os
 import re
-import glob
 import logging
 from pathlib import Path
 from typing import Optional
 
+from .. import devdir
 from ..baseheavenagent import HookPoint, HookContext, HookRegistry
 
 logger = logging.getLogger(__name__)
@@ -32,48 +29,40 @@ PER_SKILL_DESC_CHARS = 600       # cap each description so the catalog stays che
 MAX_SKILLS = 300                 # backstop on a runaway skills dir
 
 
-def _skill_roots() -> list:
-    roots = []
+def skill_summary(f: "devdir.DevdirFile") -> dict:
+    """{name, description, path} from a resolved skill file.
+    name: frontmatter > parent dir (SKILL.md) > filename stem (flat .md).
+    description: frontmatter > first non-blank, non-heading, non-fence line."""
+    p = Path(f.path)
+    name = f.frontmatter.get("name") or (p.parent.name if p.name == "SKILL.md" else p.stem)
+    desc = f.frontmatter.get("description")
+    if not desc:
+        desc = next((ln.strip() for ln in f.content[:4000].splitlines()
+                     if ln.strip() and not ln.lstrip().startswith("#") and not ln.strip().startswith("---")), "")
+    return {"name": name, "description": desc[:PER_SKILL_DESC_CHARS], "path": f.path}
+
+
+def collect_skill_files() -> list:
+    """Every skill file, priority-ordered for name dedup (nearest devdir level first, then the
+    registry store), through THE ONE RESOLVER."""
+    files = list(reversed(devdir.resolve(os.getcwd(), None, "skills")))   # nearest wins (D1)
     hdd = os.environ.get("HEAVEN_DATA_DIR")
     if hdd:
-        roots.append(os.path.join(hdd, "skills"))
-    roots.append(os.path.join(os.getcwd(), ".heaven", "skills"))
-    roots.append(str(Path.home() / ".heaven" / "skills"))
-    return roots
+        files += devdir.scan_slot_dir(Path(hdd) / "skills", "skills")
+    return files
 
 
 def collect_skills() -> Optional[str]:
-    """Assemble the AVAILABLE_SKILLS block (deduped by name, both layouts), or None if there are no skills."""
+    """Assemble the AVAILABLE_SKILLS block (deduped by name), or None if there are no skills."""
     seen, lines = set(), []
-    for root in _skill_roots():
-        paths = sorted(glob.glob(os.path.join(root, "*", "SKILL.md")))   # dir form (CC plugin / heaven)
-        paths += sorted(glob.glob(os.path.join(root, "*.md")))           # flat form (ONION morphs)
-        for sk in paths:
-            try:
-                text = Path(sk).read_text()[:4000]
-            except Exception:
-                continue
-            nm = re.search(r"^name:\s*(.+)$", text, re.M)
-            ds = re.search(r"^description:\s*(.+)$", text, re.M)
-            # name: frontmatter > parent dir (SKILL.md) > filename stem (flat .md)
-            if nm:
-                name = nm.group(1).strip()
-            elif os.path.basename(sk) == "SKILL.md":
-                name = os.path.basename(os.path.dirname(sk))
-            else:
-                name = os.path.splitext(os.path.basename(sk))[0]
-            if name in seen:
-                continue
-            seen.add(name)
-            # description: frontmatter > first non-blank, non-heading, non-fence line
-            if ds:
-                desc = ds.group(1).strip()
-            else:
-                desc = next((ln.strip() for ln in text.splitlines()
-                             if ln.strip() and not ln.lstrip().startswith("#") and not ln.strip().startswith("---")), "")
-            lines.append(f"- **{name}** — {desc[:PER_SKILL_DESC_CHARS]}  (full skill: read {sk})")
-            if len(lines) >= MAX_SKILLS:
-                break
+    for f in collect_skill_files():
+        s = skill_summary(f)
+        if s["name"] in seen:
+            continue
+        seen.add(s["name"])
+        lines.append(f"- **{s['name']}** — {s['description']}  (full skill: read {s['path']})")
+        if len(lines) >= MAX_SKILLS:
+            break
     if not lines:
         return None
     return ("\n\n<AVAILABLE_SKILLS>\n"

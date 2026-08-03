@@ -6,7 +6,7 @@ Give it where the app launched (`launch_dir`), where the agent is standing (`cwd
 its most recent read/bash), and a slot name (`rules` / `skills` / `hooks` / `agents` / `morphs`
 / anything); it returns every file for that slot from every source, precedence-ordered
 (least-specific first, nearest level LAST — the nearest refines), each stamped with its
-provenance. ADDING A SLOT IS ADDING AN ENTRY TO `SLOT_GRAMMARS` — an unknown slot already
+provenance. ADDING A SLOT IS ADDING AN ENTRY TO `SLOT_DIR_GRAMMARS` — an unknown slot already
 resolves via the DEFAULT grammar (every file one and two levels under `<devdir>/<slot>/`).
 
 The sources, in order (mirrors Claude Code's markdownConfigLoader source ladder):
@@ -104,45 +104,31 @@ def devdir_levels(start: Union[str, Path]) -> List[Path]:
 
 
 # ── The slot grammars — where a slot's files live inside a devdir ──────────────────────────
-# A grammar = a function (level, devdir_name) -> ordered file paths. Named slots carry the
-# real on-disk grammar each slot has today; ANY OTHER slot name resolves via _default_slot.
+# A grammar has two halves: `_<slot>_in(d)` = the files inside a BARE slot dir (so a registry
+# store like `$HEAVEN_DATA_DIR/skills` scans with the SAME grammar — no second scanner), and
+# a level wrapper (level, devdir_name) -> paths that locates `<level>/<devdir>/<slot>/`. Named
+# slots carry the real on-disk grammar each slot has today; ANY OTHER slot name resolves via
+# the default grammar.
 
-def _rules_files(level: Path, devdir_name: str) -> List[Path]:
-    """The instruction surface: level-root CLAUDE.md/AGENTS.md + the devdir's own instruction
-    file(s) + `<devdir>/rules/*.md`. (.claude reads CLAUDE.md; .heaven reads AGENTS.md too.)"""
-    if devdir_name == ".claude":
-        files = [level / "CLAUDE.md", level / ".claude" / "CLAUDE.md"]
-    else:
-        files = [level / "AGENTS.md", level / "CLAUDE.md",
-                 level / ".heaven" / "AGENTS.md", level / ".heaven" / "CLAUDE.md"]
-    rules_dir = level / devdir_name / "rules"
-    if rules_dir.is_dir():
-        files.extend(sorted(rules_dir.glob("*.md")))
-    return [p for p in files if p.is_file()]
-
-
-def _skills_files(level: Path, devdir_name: str) -> List[Path]:
-    """`<devdir>/skills/*/SKILL.md` (dir form) + `<devdir>/skills/*.md` (flat form)."""
-    d = level / devdir_name / "skills"
+def _skills_in(d: Path) -> List[Path]:
+    """`*/SKILL.md` (dir form) + `*.md` (flat form)."""
     if not d.is_dir():
         return []
     return sorted(d.glob("*/SKILL.md")) + sorted(d.glob("*.md"))
 
 
-def _hooks_files(level: Path, devdir_name: str) -> List[Path]:
-    """`<devdir>/hooks/*.py` — presence = active; `<name>.py.inactive` is structurally
-    excluded by the glob (the ONION toggle). `_`/`.`-prefixed names are private."""
-    d = level / devdir_name / "hooks"
+def _hooks_in(d: Path) -> List[Path]:
+    """`*.py` — presence = active; `<name>.py.inactive` is structurally excluded by the glob
+    (the ONION toggle). `_`/`.`-prefixed names are private."""
     if not d.is_dir():
         return []
     return [p for p in sorted(d.glob("*.py")) if not p.name.startswith(("_", "."))]
 
 
-def _agents_files(level: Path, devdir_name: str) -> List[Path]:
-    """`<devdir>/agents/{name}/*.py` — an agent config is a PYTHON FILE loading its json
-    (`{name}/{name}_config.py`, or a Replicant class). Flat `agents/*.py` kept for the legacy
-    flat convention. Non-.py files (e.g. a stray .md) do NOT resolve — an agent is code."""
-    d = level / devdir_name / "agents"
+def _agents_in(d: Path) -> List[Path]:
+    """`{name}/*.py` — an agent config is a PYTHON FILE loading its json
+    (`{name}/{name}_config.py`, or a Replicant class). Flat `*.py` kept for the legacy flat
+    convention. Non-.py files (e.g. a stray .md) do NOT resolve — an agent is code."""
     if not d.is_dir():
         return []
     out = [p for p in sorted(d.glob("*/*.py")) if not p.name.startswith(("_", "."))]
@@ -150,34 +136,78 @@ def _agents_files(level: Path, devdir_name: str) -> List[Path]:
     return out
 
 
-def _morphs_files(level: Path, devdir_name: str) -> List[Path]:
-    """`<devdir>/morphs/*.json` — toggle-set loadouts."""
-    d = level / devdir_name / "morphs"
+def _morphs_in(d: Path) -> List[Path]:
+    """`*.json` — toggle-set loadouts."""
     if not d.is_dir():
         return []
     return sorted(d.glob("*.json"))
 
 
-def _default_slot(slot: str):
+def _default_in(d: Path) -> List[Path]:
     """The grammar for a slot this file has never seen: every non-private regular file one and
-    two levels under `<devdir>/<slot>/`. Adding a named grammar later only NARROWS this."""
-    def _files(level: Path, devdir_name: str) -> List[Path]:
-        d = level / devdir_name / slot
-        if not d.is_dir():
-            return []
-        found = [p for p in sorted(d.glob("*")) if p.is_file()]
-        found += [p for p in sorted(d.glob("*/*")) if p.is_file()]
-        return [p for p in found if not p.name.startswith(("_", "."))]
-    return _files
+    two levels under the slot dir. Adding a named grammar later only NARROWS this."""
+    if not d.is_dir():
+        return []
+    found = [p for p in sorted(d.glob("*")) if p.is_file()]
+    found += [p for p in sorted(d.glob("*/*")) if p.is_file()]
+    return [p for p in found if not p.name.startswith(("_", "."))]
 
 
-SLOT_GRAMMARS = {
-    "rules": _rules_files,
-    "skills": _skills_files,
-    "hooks": _hooks_files,
-    "agents": _agents_files,
-    "morphs": _morphs_files,
+def _rules_in(d: Path) -> List[Path]:
+    """`*.md` in a bare rules dir (the level wrapper adds the level-root instruction files)."""
+    if not d.is_dir():
+        return []
+    return sorted(d.glob("*.md"))
+
+
+SLOT_DIR_GRAMMARS = {
+    "rules": _rules_in,
+    "skills": _skills_in,
+    "hooks": _hooks_in,
+    "agents": _agents_in,
+    "morphs": _morphs_in,
 }
+
+
+def _slot_files(level: Path, devdir_name: str, slot: str) -> List[Path]:
+    """The level grammar: `<level>/<devdir>/<slot>/` through the slot's dir grammar. The
+    `rules` slot ADDITIONALLY includes the instruction surface at the level root (.claude
+    reads CLAUDE.md; .heaven reads AGENTS.md too) — that is what makes a dir a devdir."""
+    d = level / devdir_name / slot
+    files: List[Path] = []
+    if slot == "rules":
+        if devdir_name == ".claude":
+            heads = [level / "CLAUDE.md", level / ".claude" / "CLAUDE.md"]
+        else:
+            heads = [level / "AGENTS.md", level / "CLAUDE.md",
+                     level / ".heaven" / "AGENTS.md", level / ".heaven" / "CLAUDE.md"]
+        files.extend(p for p in heads if p.is_file())
+    files.extend(SLOT_DIR_GRAMMARS.get(slot, _default_in)(d))
+    return files
+
+
+def scan_slot_dir(d: Union[str, Path], slot: str, root_kind: str = "registry") -> List["DevdirFile"]:
+    """Scan a BARE slot dir (a registry store like `$HEAVEN_DATA_DIR/skills`, or a bundled
+    package dir) with `slot`'s grammar — same file rules, no walk, provenance stamped
+    `root=root_kind`. For registry stores that are NOT inside a devdir."""
+    d = Path(d).expanduser()
+    out: List[DevdirFile] = []
+    for path in SLOT_DIR_GRAMMARS.get(slot, _default_in)(d):
+        try:
+            content = path.read_text()
+        except Exception:
+            continue
+        try:
+            rp = str(path.resolve())
+        except Exception:
+            rp = str(path)
+        out.append(DevdirFile(
+            path=rp,
+            frontmatter=parse_frontmatter(content),
+            content=content,
+            source=DevdirSource(root=root_kind, level=str(d), devdir="-"),
+        ))
+    return out
 
 
 # ── Frontmatter ────────────────────────────────────────────────────────────────────────────
@@ -224,9 +254,10 @@ def resolve(launch_dir: Union[str, Path],
     walk root-first, then the active walk (nearest level LAST — the nearest refines). Files
     deduped by resolved path, then by content hash. Unreadable files are skipped silently
     (finding, not judging); empty-vs-missing is the consumer's distinction to make.
-    """
-    grammar = SLOT_GRAMMARS.get(slot) or _default_slot(slot)
 
+    NAME-COLLISION PRIORITY (D1: project wins): consumers that dedup by NAME iterate the
+    returned list REVERSED (nearest level first), so the project's file beats the user's.
+    """
     # (root_kind, level) pairs, in precedence order, level-deduped.
     ordered: List[tuple] = [("user", Path.home())]
     for kind, root in (("launch", launch_dir), ("active", cwd)) + tuple(
@@ -245,7 +276,7 @@ def resolve(launch_dir: Union[str, Path],
             continue
         seen_levels.add(lk)
         for devdir_name in DEVDIR_NAMES:
-            for path in grammar(level, devdir_name):
+            for path in _slot_files(level, devdir_name, slot):
                 try:
                     rp = str(path.resolve())
                 except Exception:
@@ -272,6 +303,6 @@ def resolve(launch_dir: Union[str, Path],
 
 RESOLVE = resolve   # the name the design speaks in
 
-__all__ = ["RESOLVE", "resolve", "DevdirFile", "DevdirSource", "DEVDIR_NAMES",
-           "SLOT_GRAMMARS", "devdir_levels", "dir_has_devdir", "parse_frontmatter",
-           "MAX_DEVDIR_WALKUP"]
+__all__ = ["RESOLVE", "resolve", "scan_slot_dir", "DevdirFile", "DevdirSource",
+           "DEVDIR_NAMES", "SLOT_DIR_GRAMMARS", "devdir_levels", "dir_has_devdir",
+           "parse_frontmatter", "MAX_DEVDIR_WALKUP"]

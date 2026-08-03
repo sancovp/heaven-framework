@@ -42,21 +42,23 @@ def get_tool_modules() -> str:
     return ", ".join(sorted(set(available_tools)))  # Remove duplicates
 
 def get_agent_modules() -> str:
-    """Get formatted string of available agent directories from heaven_base and HEAVEN_DATA_DIR"""
+    """Formatted string of available agent NAMES: heaven_base builtins + HEAVEN_DATA_DIR/agents
+    + the devdir ROSTER (`<devdir>/agents/` from the user root + the cwd walk, via THE ONE
+    RESOLVER `heaven_base.devdir` — the agents an agent standing here can talk to/dispatch to)."""
     modules = []
-    
+
     # Get built-in agents from heaven_base
     current_dir = os.path.dirname(os.path.abspath(__file__))
     agents_path = os.path.join(os.path.dirname(current_dir), "agents")
-    
+
     if os.path.exists(agents_path):
         for item in os.listdir(agents_path):
             full_path = os.path.join(agents_path, item)
-            if (os.path.isdir(full_path) and 
-                not item.startswith('__') and 
+            if (os.path.isdir(full_path) and
+                not item.startswith('__') and
                 item != '__pycache__'):
                 modules.append(item)
-    
+
     # Get custom agents from HEAVEN_DATA_DIR/agents/
     heaven_data_dir = os.environ.get('HEAVEN_DATA_DIR')
     if heaven_data_dir:
@@ -64,15 +66,30 @@ def get_agent_modules() -> str:
         if os.path.exists(custom_agents_path):
             for item in os.listdir(custom_agents_path):
                 full_path = os.path.join(custom_agents_path, item)
-                if (os.path.isdir(full_path) and 
-                    not item.startswith('__') and 
+                if (os.path.isdir(full_path) and
+                    not item.startswith('__') and
                     item != '__pycache__'):
                     modules.append(item)
-    
+
+    # The devdir roster: agent configs resolved from the devdirs that apply here.
+    # Nested `agents/{name}/{name}_config.py` -> name = the dir; flat `agents/{name}_config.py`
+    # -> name = the stem minus `_config`.
+    try:
+        from .. import devdir
+        for f in devdir.resolve(os.getcwd(), None, "agents"):
+            p = os.path.basename(f.path)
+            parent = os.path.basename(os.path.dirname(f.path))
+            if parent != "agents":
+                modules.append(parent)
+            elif p.endswith("_config.py"):
+                modules.append(p[:-len("_config.py")])
+    except Exception:
+        pass  # roster discovery must never break the switchboard
+
     # Fallback if no agents directory exists
     if not modules:
         modules = ["summary_agent"]
-    
+
     return ", ".join(sorted(set(modules)))  # Remove duplicates
 
 
