@@ -1436,12 +1436,31 @@ You must fix the error before proceeding."""
         return module
 
     def _register_devdir_hook_file(self, path: Path) -> bool:
-        """Register a .claude/.heaven hook file once for this agent."""
+        """Register a .claude/.heaven hook file once for this agent.
+
+        TWO KINDS (CLAUDE-PARITY §1): a SCRIPT hook — the file's text header declares
+        `# hook-events: ...` (heaven_base/hook_script.py: JSON stdin → JSON stdout, imports
+        nothing, any language, TRANSPORTS) — or a MODULE hook (register(registry) /
+        hook(ctx)+POINT, imported in-process). The script check reads TEXT only, never execs."""
+        from . import hook_script
         if not hasattr(self, "_devdir_hook_keys"):
             self._devdir_hook_keys = set()
         key = str(path.resolve())
         if key in self._devdir_hook_keys:
             return False
+        try:
+            decl = hook_script.parse_decl(path.read_text())
+        except Exception:
+            decl = None
+        if decl is not None:
+            for ev in decl.events:
+                point = self._resolve_hook_point(ev)
+                self.hooks.register(point, hook_script.make_script_hook(path, decl, point.value))
+            if not getattr(self, "_script_inject_flusher_on", False):
+                self.hooks.register(HookPoint.BEFORE_SYSTEM_PROMPT, hook_script.make_inject_flusher())
+                self._script_inject_flusher_on = True
+            self._devdir_hook_keys.add(key)
+            return True
         module = self._load_devdir_hook(path)
         if hasattr(module, "register") and callable(module.register):
             module.register(self.hooks)
@@ -1451,7 +1470,8 @@ You must fix the error before proceeding."""
             if points is None:
                 points = getattr(module, "POINT", None)
             if not callable(fn) or points is None:
-                raise ValueError("hook needs register(registry) OR hook(ctx)+POINT/POINTS")
+                raise ValueError("hook needs register(registry) OR hook(ctx)+POINT/POINTS "
+                                 "OR a `# hook-events:` script header")
             points = points if isinstance(points, (list, tuple)) else [points]
             for point in points:
                 self.hooks.register(self._resolve_hook_point(point), fn)
