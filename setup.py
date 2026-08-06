@@ -13,7 +13,11 @@ with open(os.path.join(this_directory, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name="heaven-framework",
-    version="0.1.29",
+    # ⚠ pyproject.toml's [project].version IS THE SOURCE OF TRUTH — this line only exists for the
+    # legacy editable-install path and must be kept equal to it. It sat at 0.1.29 while pyproject
+    # said 0.1.36 (seven releases of drift), so anything built through setup.py would have shipped
+    # as an already-published version. Bump BOTH or neither.
+    version="0.1.36",
     description="HEAVEN - Hierarchical, Embodied, Autonomously Validating Evolution Network",
     long_description=long_description,
     long_description_content_type="text/markdown",
