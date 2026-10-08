@@ -1,5 +1,7 @@
 import asyncio
 import os
+import signal
+import weakref
 from typing import Optional, Dict, Any, ClassVar, Type
 from langchain.tools import Tool, BaseTool
 from langchain.callbacks.manager import AsyncCallbackManagerForToolRun
@@ -7,6 +9,18 @@ from langchain.schema.runnable import RunnableConfig
 from collections.abc import Callable
 
 from ..baseheaventool import BaseHeavenTool, ToolResult, CLIResult, ToolError, ToolArgsSchema
+
+# Every bash session that has started, so a process that is exiting can kill what they still run.
+_LIVE_SESSIONS: "weakref.WeakSet[_BashSession]" = weakref.WeakSet()
+
+
+def kill_all_sessions() -> int:
+    """Kills every started bash session's process group (the shell and every command it runs); returns how many."""
+    n = 0
+    for session in list(_LIVE_SESSIONS):
+        n += bool(session.kill())
+    return n
+
 
 class _BashSession:
     """A session of a bash shell."""
@@ -38,6 +52,18 @@ class _BashSession:
         )
 
         self._started = True
+        _LIVE_SESSIONS.add(self)
+
+    def kill(self) -> bool:
+        """Kills the shell and every command it is running: the shell leads its own process group (`setsid`), so
+        the whole group is sent SIGKILL. Returns whether a running shell was killed."""
+        if not self._started or self._process.returncode is not None:
+            return False
+        try:
+            os.killpg(self._process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            return False
+        return True
 
     def stop(self):
         """Terminate the bash shell."""
@@ -233,6 +259,8 @@ class BashTool(BaseHeavenTool):
         cls.func = wrapped_func
         instance = super().create(adk=adk)
         wrapped_func.__self__ = instance
+        # A stopped turn kills its shell and the command it runs, not only the await that waits on them.
+        instance.kill_session = lambda: session.kill()
         return instance
 
 

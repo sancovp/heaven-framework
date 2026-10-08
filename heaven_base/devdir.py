@@ -111,10 +111,12 @@ def devdir_levels(start: Union[str, Path]) -> List[Path]:
 # the default grammar.
 
 def _skills_in(d: Path) -> List[Path]:
-    """`*/SKILL.md` (dir form) + `*.md` (flat form)."""
+    """`*/SKILL.md` (dir form) + `*.md` (flat form). A skill switched off (its dir renamed `<name>.inactive`, the
+    ONION toggle) is excluded, as a flat `<name>.md.inactive` is by the glob."""
     if not d.is_dir():
         return []
-    return sorted(d.glob("*/SKILL.md")) + sorted(d.glob("*.md"))
+    return ([p for p in sorted(d.glob("*/SKILL.md")) if not p.parent.name.endswith(".inactive")]
+            + sorted(d.glob("*.md")))
 
 
 def _hooks_in(d: Path) -> List[Path]:
@@ -128,10 +130,12 @@ def _hooks_in(d: Path) -> List[Path]:
 def _agents_in(d: Path) -> List[Path]:
     """`{name}/*.py` — an agent config is a PYTHON FILE loading its json
     (`{name}/{name}_config.py`, or a Replicant class). Flat `*.py` kept for the legacy flat
-    convention. Non-.py files (e.g. a stray .md) do NOT resolve — an agent is code."""
+    convention. Non-.py files (e.g. a stray .md) do NOT resolve — an agent is code. An agent dir switched off
+    (`<name>.inactive`, the ONION toggle) is excluded."""
     if not d.is_dir():
         return []
-    out = [p for p in sorted(d.glob("*/*.py")) if not p.name.startswith(("_", "."))]
+    out = [p for p in sorted(d.glob("*/*.py"))
+           if not p.name.startswith(("_", ".")) and not p.parent.name.endswith(".inactive")]
     out += [p for p in sorted(d.glob("*.py")) if not p.name.startswith(("_", "."))]
     return out
 

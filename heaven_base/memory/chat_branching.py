@@ -105,7 +105,9 @@ def _substitute(obj: Any, mapping: Dict[str, str]) -> Any:
     str.format would explode)."""
     if isinstance(obj, str):
         for k, v in mapping.items():
-            obj = re.sub(r"\{\{" + re.escape(k) + r"\}\}", v, obj)
+            # the value is inserted as it is: a replacement STRING would read its backslashes as escapes
+            # (`\d` → "bad escape", `\1` → a group reference, `\n` → a newline)
+            obj = re.sub(r"\{\{" + re.escape(k) + r"\}\}", lambda _m, _v=str(v): _v, obj)
         return obj
     if isinstance(obj, list):
         return [_substitute(x, mapping) for x in obj]

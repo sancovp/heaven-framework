@@ -51,6 +51,11 @@ class EnvConfigUtil:
     # Global constant with the list of target container names.
     TARGET_CONTAINERS = ["image_of_god", "creation_of_god"]
     CONFIG_FILE = "/home/GOD/system_config.sh"
+    # Keys a process chooses once and keeps. Re-sourcing the shell config must never move a
+    # running process's data dir: an app that sets HEAVEN_DATA_DIR before its first heaven call
+    # (OnionMorph keeps its chats out of /tmp) would otherwise be reset to the file's value on
+    # every read, and its data would silently land in two places.
+    PROCESS_PINNED_KEYS = ("HEAVEN_DATA_DIR",)
 
     @staticmethod
     def _update_env_val():
@@ -61,6 +66,8 @@ class EnvConfigUtil:
         # Update the current process's environment
         for line in result.stdout.splitlines():
             key, _, value = line.partition("=")
+            if key in EnvConfigUtil.PROCESS_PINNED_KEYS and os.environ.get(key):
+                continue
             os.environ[key] = value
 
 

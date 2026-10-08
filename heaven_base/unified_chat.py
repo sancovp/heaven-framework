@@ -192,9 +192,7 @@ class UnifiedChat:
                         "summary": "auto",
                     }
                     
-            else: # for 4o or 4o-mini model temperature
-                if 'temperature' not in kwargs:
-                    kwargs['temperature'] = float(EnvConfigUtil.get_env_value("MODEL_DEFAULT_TEMP", 0.7))
+            # no temperature of heaven's own: the model APIs no longer take one; a caller's explicit value passes
         
         elif provider == ProviderEnum.GOOGLE:
 
@@ -243,7 +241,6 @@ class UnifiedChat:
                 kwargs.setdefault("anthropic_api_url", "https://api.minimax.io/anthropic")
             if extract_model_number(model) > 3.6 and thinking_budget is not None: # assuming only claude model 3.7 or higher allow thinking
                 kwargs['thinking'] = {"type": "enabled", "budget_tokens": thinking_budget}
-                kwargs['temperature'] = 0.7
         else:
             kwargs['model'] = model
         

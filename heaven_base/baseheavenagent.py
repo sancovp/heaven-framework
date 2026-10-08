@@ -866,6 +866,9 @@ class BaseHeavenAgent(ABC):
         if unified_chat is None:
             raise ValueError("unified_chat cannot be None")
         self.use_uni_api = use_uni_api
+        # refresh_system_prompt rebuilds the first system message before every model call and keeps the
+        # HERMES SWITCHBOARD (orchestration_lists) only when this is set.
+        self.orchestrator = orchestrator
         self.unified_chat = unified_chat
         self.known_config_paths = getattr(config, "known_config_paths", None)
         if self.known_config_paths is None:

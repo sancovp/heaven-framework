@@ -285,3 +285,11 @@ def test_to_context_dict_shape(source_history):
     assert ctx["description"] == "d"
     assert isinstance(ctx["conversation"], list)
     assert ctx["conversation"][0].startswith("user: ")
+
+
+def test_substitute_inserts_a_value_as_it_is():
+    """A value is inserted as it is: backslashes are not read as regex escapes or group references."""
+    from heaven_base.memory.chat_branching import _substitute
+    msgs = [{"type": "HumanMessage", "content": "open {{path}} and grep {{pat}}"}]
+    out = _substitute(msgs, {"path": "C:\\Users\\me", "pat": "\\d+\\1\\n"})
+    assert out[0]["content"] == "open C:\\Users\\me and grep \\d+\\1\\n"

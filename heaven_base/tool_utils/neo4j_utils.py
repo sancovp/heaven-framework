@@ -48,67 +48,88 @@ class KnowledgeGraphBuilder:
         self.uri = uri or os.environ.get('NEO4J_URI', 'bolt://host.docker.internal:7687')
         self.user = user or os.environ.get('NEO4J_USER', 'neo4j')
         self.password = password or os.environ.get('NEO4J_PASSWORD', 'password')
-        self.driver = None  # Lazy connection - only connect when needed
-    
+        self._store = None   # the backend, built lazily by _ensure_connection
+        self.driver = None   # kept public: the raw neo4j driver, or None on a driverless backend
+
     def _ensure_connection(self):
-        """Ensure Neo4j connection is established (lazy initialization)."""
-        if self.driver is None:
+        """Ensure the graph backend is established (lazy initialization).
+
+        THE SEAM (2026-08-12). This class is where `GRAPH_BACKEND` is honoured, because this
+        class is what every consumer holds: 139 call sites across 15 files reach the graph through
+        `execute_query`, either on a connection they constructed, on the `get_shared_graph()`
+        singleton, or on one handed to them as `shared_connection`. Routing here means all of them
+        follow the backend without knowing it exists. With GRAPH_BACKEND unset the behaviour is
+        exactly what it was — `self.driver` is a real neo4j driver and every query runs the same
+        way — which matters because this is the live path of a 643,090-node production graph.
+        """
+        if self._store is None:
             try:
-                from neo4j import GraphDatabase
-                # Add connection timeout to prevent hanging
-                self.driver = GraphDatabase.driver(
-                    self.uri, 
-                    auth=(self.user, self.password),
-                    connection_timeout=5.0,  # 5 second timeout
-                    max_connection_lifetime=30  # 30 second max lifetime
-                )
+                from .graph_store import make_store
+                self._store = make_store(self.uri, self.user, self.password)
+                self.driver = self._store.driver
                 self._test_connection()
             except ImportError:
                 raise ImportError("Neo4j Python driver not installed. Install with: pip install neo4j")
             except Exception as e:
                 raise ConnectionError(f"Failed to connect to Neo4j: {str(e)}")
-    
+
     def _test_connection(self):
-        """Test the connection to Neo4j."""
-        with self.driver.session() as session:
-            result = session.run("RETURN 1 AS test")
-            record = result.single()
-            if not record or record.get("test") != 1:
-                raise ConnectionError("Neo4j connection test failed")
-    
+        """Test the connection to the graph."""
+        # Goes through the store rather than self.driver: a driverless backend must still be
+        # testable, and the check is what proves the backend answers at all.
+        result = self._store.execute("RETURN 1 AS test", {})
+        if not result or result[0].get("test") != 1:
+            raise ConnectionError("Neo4j connection test failed")
+
     def close(self):
-        """Close the Neo4j connection."""
-        if hasattr(self, 'driver') and self.driver is not None:
-            self.driver.close()
-    
+        """Close the graph connection."""
+        if getattr(self, '_store', None) is not None:
+            self._store.close()
+            self._store = None
+            self.driver = None
+
     def clear_database(self):
         """Clear all nodes and relationships from the database."""
-        self._ensure_connection()
-        with self.driver.session() as session:
-            session.run("MATCH (n) DETACH DELETE n")
-    
+        self.execute_query("MATCH (n) DETACH DELETE n")
+
     def create_indexes(self):
         """Create indexes for faster lookups."""
-        self._ensure_connection()
-        with self.driver.session() as session:
-            session.run("CREATE INDEX IF NOT EXISTS FOR (t:Tool) ON (t.name)")
-            session.run("CREATE INDEX IF NOT EXISTS FOR (a:Agent) ON (a.name)")
-            session.run("CREATE INDEX IF NOT EXISTS FOR (f:Function) ON (f.name)")
+        self.execute_query("CREATE INDEX IF NOT EXISTS FOR (t:Tool) ON (t.name)")
+        self.execute_query("CREATE INDEX IF NOT EXISTS FOR (a:Agent) ON (a.name)")
+        self.execute_query("CREATE INDEX IF NOT EXISTS FOR (f:Function) ON (f.name)")
 
     def execute_query(self, query: str, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """Execute a Cypher query and return the results.
-        
+
         Args:
             query: Cypher query string
             params: Optional parameters for the query
-            
+
         Returns:
             List of records as dictionaries
         """
         self._ensure_connection()
-        with self.driver.session() as session:
-            result = session.run(query, params or {})
-            return [dict(record) for record in result]
+        return self._store.execute(query, params or {})
+
+    # --- the property surface -------------------------------------------------------------- #
+    # These exist because a property key is an arbitrary user string standing where Cypher wants
+    # an IDENTIFIER, which is the one carton shape that cannot be spelled once and run on any
+    # backend. Asking the connection keeps the callers backend-agnostic.
+
+    def set_properties(self, concept_name: str, properties: Dict[str, Any]) -> None:
+        """SET properties on an EXISTING concept (never creates one)."""
+        self._ensure_connection()
+        self._store.set_properties(concept_name, properties)
+
+    def remove_properties(self, concept_name: str, keys: List[str]) -> None:
+        """REMOVE property keys from an existing concept."""
+        self._ensure_connection()
+        self._store.remove_properties(concept_name, list(keys))
+
+    def find_by_properties(self, where: Dict[str, Any], limit: int = 25) -> List[Dict[str, Any]]:
+        """Concepts matching every key/value in `where`, with those keys returned alongside `n`."""
+        self._ensure_connection()
+        return self._store.find_by_properties(where, limit)
     
     def visualize_query(self, query: str) -> str:
         """Open the Neo4j Browser with the specified query.
