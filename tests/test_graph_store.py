@@ -441,23 +441,60 @@ def test_ladybug_a_plan_cached_BEFORE_an_ALTER_does_not_hide_the_new_column():
     return _with_kuzu(body)
 
 
-def test_KUZU_READ_ONLY_REFUSES_and_names_the_endpoint():
+def test_KUZU_READ_ONLY_REFUSES_and_names_the_api():
     """A second process's read_only open succeeds on ladybug and serves a stale snapshot, so the
-    setting refuses rather than open anything — and says what to do instead."""
-    prev = {k: os.environ.get(k) for k in ("GRAPH_BACKEND", "KUZU_READ_ONLY", "KUZU_DB_PATH", "KUZU_QUERY_URL")}
+    setting refuses rather than open anything — and says what to do instead: call the SDK the
+    worker serves."""
+    prev = {k: os.environ.get(k) for k in ("GRAPH_BACKEND", "KUZU_READ_ONLY", "KUZU_DB_PATH")}
     os.environ.update(GRAPH_BACKEND="kuzu", KUZU_READ_ONLY="1", KUZU_DB_PATH="/nonexistent/never-opened")
-    os.environ.pop("KUZU_QUERY_URL", None)
     try:
         make_store("", "", "")
         raise AssertionError("KUZU_READ_ONLY opened a store instead of refusing")
     except ValueError as exc:
-        assert "KUZU_QUERY_URL" in str(exc) and "stale" in str(exc), exc
+        assert "CARTON_URL" in str(exc) and "stale" in str(exc), exc
     finally:
         for key, value in prev.items():
             if value is None:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+def test_ONE_PROCESS_HOLDS_ONE_EMBEDDED_STORE_PER_PATH():
+    """The worker owns the file AND serves the SDK, whose functions each build their own
+    KnowledgeGraphBuilder: every one of them must resolve to the worker's one handle, or the
+    served call meets the file lock the way a second process would."""
+    if not has_kuzu():
+        return _skip()
+    from heaven_base.tool_utils.graph_store import embedded_store
+    from heaven_base.tool_utils.neo4j_utils import KnowledgeGraphBuilder
+
+    tmp = tempfile.mkdtemp(prefix="kuzu_one_store_")
+    prev = {k: os.environ.get(k) for k in ("GRAPH_BACKEND", "KUZU_DB_PATH")}
+    os.environ.update(GRAPH_BACKEND="kuzu", KUZU_DB_PATH=os.path.join(tmp, "db"))
+    try:
+        a, b = KnowledgeGraphBuilder(), KnowledgeGraphBuilder()
+        a._ensure_connection()
+        b._ensure_connection()
+        assert a._store is b._store, "two builders in one process opened the file twice"
+        assert embedded_store(os.path.join(tmp, "db")) is a._store
+        a.execute_query("CREATE (c:Wiki {n: $n, linked: false})", {"n": "Shared_Handle"})
+        assert b.execute_query("MATCH (c:Wiki) RETURN c.n AS n", {}) == [{"n": "Shared_Handle"}]
+        shared = a._store
+        a.close()
+        assert shared.closed, "close did not mark the shared store closed"
+        fresh = KnowledgeGraphBuilder()
+        fresh._ensure_connection()
+        assert fresh._store is not shared and not fresh._store.closed, "a closed store was handed out again"
+        assert fresh.execute_query("MATCH (c:Wiki) RETURN c.n AS n", {}) == [{"n": "Shared_Handle"}]
+        fresh.close()
+    finally:
+        for key, value in prev.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def test_KuzuStore_offers_NO_read_only_open():

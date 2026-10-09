@@ -12,8 +12,7 @@ is `application/carton-saas/kuzu-port/LADYBUG.md`.
 the embedded, single-writer, Kuzu-dialect graph this file adapts to — not the pip package that
 serves it, and every box, `system_config.sh` and test already says `kuzu`. An alias would be a
 second spelling of one choice, and `resolve_backend` exists so there is exactly one place and one
-word for it. The class names (`KuzuStore`, `KuzuHttpStore`) and the `KUZU_*` env names stay for
-the same reason.
+word for it. The class name (`KuzuStore`) and the `KUZU_*` env names stay for the same reason.
 
 THREE LADYBUG LAWS THIS FILE ENFORCES, each pinned by a test in `tests/test_graph_store.py`:
   1. CONNECTION RENEWAL. Ladybug's Python client caches a prepared statement per connection for
@@ -25,9 +24,13 @@ THREE LADYBUG LAWS THIS FILE ENFORCES, each pinned by a test in `tests/test_grap
      dicts through untouched (`_rows` reads column names only), so the law binds their READERS —
      today one, `CartOnUtils._relationship_type_path` — which accept both spellings. A reader
      that names one spelling gets an empty answer from the other engine, never an error.
-  3. NO READ-ONLY OPEN. A second process's `read_only` open SUCCEEDS on ladybug while the writer
-     holds the file, and serves a stale snapshot. `KUZU_READ_ONLY` therefore refuses; readers ask
-     the owner over `KuzuHttpStore`.
+  3. NO READ-ONLY OPEN, AND NO SECOND OPENER. A second process's `read_only` open SUCCEEDS on
+     ladybug while the writer holds the file, and serves a stale snapshot; a second read-write open
+     is refused by the lock. `KUZU_READ_ONLY` therefore refuses. ONE process holds the file — the
+     worker, which is CartON's server — and every other process calls the SDK it serves
+     (`knowledge/carton-mcp/carton_api.py`: `CARTON_URL` + `CARTON_KEY`, `call_carton`). Inside
+     the owning process every `KnowledgeGraphBuilder` shares the ONE `KuzuStore` per path
+     (`embedded_store`), so the server's SDK calls and its queue drain use one handle.
 
 WHY THIS FILE EXISTS, AND WHY IT IS HERE RATHER THAN IN carton-mcp. The carton-saas tenant box
 runs an embedded graph instead of a JVM sidecar (see application/carton-saas/kuzu-port/). The
@@ -269,10 +272,14 @@ class KuzuStore(GraphStore):
 
     def __init__(self, db_path: str):
         # NO read_only PARAMETER. The process that opens the file owns it and writes; any other
-        # process reads through KuzuHttpStore. A read_only open from a second process succeeds on
-        # ladybug and serves a stale snapshot, so it is not offered at all (see make_store).
+        # process calls the SDK that process serves (carton_api). A read_only open from a second
+        # process succeeds on ladybug and serves a stale snapshot, so it is not offered at all
+        # (see make_store). Built through `embedded_store`, never directly, so one process holds
+        # exactly one handle per path.
         engine = _engine()
         self._engine = engine
+        self._path = os.path.abspath(db_path)
+        self.closed = False
         self._db = engine.Database(db_path)
         self._conn = engine.Connection(self._db)
         # REENTRANT deliberately: the read-modify-write property paths hold the lock across
@@ -567,98 +574,35 @@ class KuzuStore(GraphStore):
         return rows
 
     def close(self) -> None:
+        """Close the one handle this process holds on the file and forget it, so the next
+        `embedded_store` for the path opens afresh. Every holder of this store sees it closed."""
+        self.closed = True
+        with _EMBEDDED_LOCK:
+            if _EMBEDDED.get(self._path) is self:
+                del _EMBEDDED[self._path]
         self._conn = None
         self._db = None
 
 
-class KuzuHttpStore(GraphStore):
-    """kuzu reached over localhost HTTP, because the file can only be held by ONE process.
+# ONE EMBEDDED STORE PER PATH PER PROCESS. The engine lets one process open a directory once (a
+# second `Database` on the same path in the same process meets the same lock a second process
+# does). The worker holds the file AND serves the SDK, whose functions each build their own
+# `KnowledgeGraphBuilder`; every one of them resolves here to the same handle, so the queue drain
+# and a served `get_concept` never contend for the file. A closed store leaves the registry and the
+# next caller opens a fresh one.
+_EMBEDDED: Dict[str, "KuzuStore"] = {}
+_EMBEDDED_LOCK = threading.Lock()
 
-    WHY THIS EXISTS. The engine is embedded: the process that opens the database directory holds
-    it, a second read-write open is refused by the file lock, and a second read_only open is
-    either refused (kuzu 0.11.3) or — on ladybug — allowed and served a stale snapshot. carton is
-    not one process — the MCP server, the worker daemon and every agent's stdio subprocess all read the
-    graph. Under neo4j they each opened a bolt connection to a shared server; under kuzu exactly
-    one process can own the file, so everybody else has to ASK it. That process is the worker,
-    which is also the only writer, and this is the client the others use.
 
-    It is the shape carton already uses twice — SOMA on :8091 and the chroma daemon on :8190 —
-    and it is deliberately DUMB: urllib only, ZERO kuzu import, no connection state. A process
-    holding this store cannot open a kuzu file even by accident, which is the property that makes
-    the single-writer rule structural instead of remembered.
-
-    SELECTED BY `KUZU_QUERY_URL`, which takes precedence over `KUZU_DB_PATH` on purpose: if a
-    process is told where to ask, it must ASK rather than open, even when it also knows the path.
-    """
-
-    CREDENTIAL_ENV = ("CARTON_USER", "CARTON_KEY")
-
-    def __init__(self, url: str, timeout: float = 30.0, user=None, key=None):
-        self._url = url.rstrip("/")
-        self._timeout = timeout
-        # THE CREDENTIALS COME FROM THE ENVIRONMENT, which is where a tenant's MCP
-        # settings put them. Nothing is stored, negotiated or minted here: the
-        # client is told who it is and hands that to the server on every call.
-        self._user = user if user is not None else os.environ.get("CARTON_USER", "")
-        self._key = key if key is not None else os.environ.get("CARTON_KEY", "")
-
-    def _post(self, path: str, payload: Dict[str, Any]) -> Any:
-        import json
-        import urllib.error
-        import urllib.request
-
-        data = json.dumps(payload).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
-        # Sent only when configured, so the in-box localhost wire (which has no
-        # credentials and needs none) is byte-identical to before.
-        if self._key:
-            headers["Authorization"] = f"Bearer {self._key}"
-        if self._user:
-            headers["X-Carton-User"] = self._user
-        req = urllib.request.Request(f"{self._url}{path}", data=data, headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            # The endpoint answers a failed QUERY with a 400 carrying the engine's own message.
-            # Surfacing that verbatim keeps a binder/catalog error readable as itself instead of
-            # arriving as a bare HTTP status with the cause thrown away.
-            detail = exc.read().decode("utf-8", "replace")[:600]
-            raise RuntimeError(f"kuzu query endpoint {exc.code}: {detail}") from exc
-        except urllib.error.URLError as exc:
-            raise RuntimeError(
-                f"kuzu query endpoint unreachable at {self._url} ({exc.reason}). Under the "
-                "single-writer design the worker owns the database file and serves this endpoint; "
-                "if it is not running, nothing can read the graph."
-            ) from exc
-        if not body.get("ok"):
-            raise RuntimeError(f"kuzu query endpoint error: {body.get('error')}")
-        return body.get("result")
-
-    def execute(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        return self._post("/query", {"query": query, "params": params or {}}) or []
-
-    def set_properties(self, concept_name: str, properties: Dict[str, Any]) -> None:
-        self._post("/set_properties", {"concept_name": concept_name, "properties": properties})
-
-    def remove_properties(self, concept_name: str, keys: List[str]) -> None:
-        self._post("/remove_properties", {"concept_name": concept_name, "keys": list(keys)})
-
-    def find_by_properties(self, where: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
-        return self._post("/find_by_properties", {"where": where, "limit": limit}) or []
-
-    def close(self) -> None:
-        """Nothing to close — the point of this store is that it holds no database handle."""
-
-    @property
-    def driver(self):
-        """None, and that is the invariant: a client process has no driver and no file handle.
-
-        `KnowledgeGraphBuilder` mirrors this onto its own `.driver`, so any code that still
-        reaches past the class for a raw session fails LOUDLY here rather than quietly opening a
-        second handle onto a file another process owns.
-        """
-        return None
+def embedded_store(db_path: str) -> "KuzuStore":
+    """The process's one `KuzuStore` for `db_path`, opened on first use."""
+    key = os.path.abspath(db_path)
+    with _EMBEDDED_LOCK:
+        store = _EMBEDDED.get(key)
+        if store is None or store.closed:
+            store = KuzuStore(db_path)
+            _EMBEDDED[key] = store
+        return store
 
 
 def resolve_backend() -> str:
@@ -689,59 +633,32 @@ def make_store(uri: str, user: str, password: str) -> GraphStore:
     if backend == "neo4j":
         return Neo4jStore(uri, user, password)
     if backend == "kuzu":
-        # ASK BEFORE OPEN. A process told where the endpoint is must never open the file, even
-        # if it also knows the path — the owner holds the directory, so a second opener does not
-        # get a live view, it gets a lock failure or a stale snapshot (see
-        # Kuzu_Handle_Visibility_Boundary).
-        query_url = os.environ.get("KUZU_QUERY_URL")
-        if query_url:
-            # THE TIMEOUT IS CONFIGURABLE BECAUSE NOT EVERY CALLER IS INTERACTIVE. 30s is right
-            # for a query someone is waiting on; a batch writer (a repository parse issues
-            # thousands of statements against a single-writer store) can meet a longer stall
-            # while the store flushes, and a client-side timeout there aborts a run that was
-            # succeeding. Measured 2026-08-17: a code-graph parse wrote 461 nodes and then hit
-            # the 30s ceiling on one statement that completes in 0.1s on its own.
-            return KuzuHttpStore(query_url, timeout=_env_float("KUZU_QUERY_TIMEOUT_S", 30.0))
         # ⛔ A READ-ONLY OPEN IS REFUSED, NOT IGNORED. On ladybug a second process's read_only
         # open succeeds while the worker holds the file and answers from a snapshot that never
         # sees the worker's later writes — every read looks healthy and is stale. Ignoring the
         # variable instead would open the file read-write, which the lock refuses. Either way
         # the setting cannot do what it says, so it stops the process and names the way that
-        # works: the owner's endpoint.
+        # works: the SDK the worker serves.
         if _env_true("KUZU_READ_ONLY"):
             raise ValueError(
                 "KUZU_READ_ONLY is not supported: a second process's read_only open serves a "
-                "stale snapshot on ladybug. Set KUZU_QUERY_URL to the worker's query endpoint "
-                "instead (the worker owns the database file; every other process reads through "
-                "KuzuHttpStore)."
+                "stale snapshot on ladybug. The worker owns the database file and serves CartON's "
+                "SDK over HTTP (knowledge/carton-mcp/carton_api.py); a process off the worker "
+                "sets CARTON_URL and CARTON_KEY and calls it."
             )
         db_path = os.environ.get("KUZU_DB_PATH")
         if not db_path:
             raise ValueError(
                 "GRAPH_BACKEND=kuzu requires KUZU_DB_PATH (the embedded database's directory). "
                 "Under the single-writer design the worker process owns that file exclusively — "
-                "every other process reads through KuzuHttpStore (KUZU_QUERY_URL)."
+                "every other process calls the SDK the worker serves (CARTON_URL + CARTON_KEY, "
+                "knowledge/carton-mcp/carton_api.py)."
             )
-        return KuzuStore(db_path)
+        return embedded_store(db_path)
     raise ValueError(
         f"unknown GRAPH_BACKEND {backend!r}; expected 'neo4j' or 'kuzu' "
         "('kuzu' is the embedded engine, served by the ladybug package)"
     )
-
-
-def _env_float(name: str, default: float) -> float:
-    """A numeric env override that REFUSES junk rather than silently falling back to the default.
-
-    A timeout that quietly becomes 30 because someone typed `KUZU_QUERY_TIMEOUT_S=6OO` is the
-    kind of setting that looks applied and is not.
-    """
-    raw = (os.environ.get(name) or "").strip()
-    if not raw:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        raise ValueError(f"{name}={raw!r} is not a number of seconds") from None
 
 
 def _env_true(name: str) -> bool:
