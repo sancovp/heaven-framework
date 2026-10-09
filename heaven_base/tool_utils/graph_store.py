@@ -574,12 +574,18 @@ class KuzuStore(GraphStore):
         return rows
 
     def close(self) -> None:
-        """Close the one handle this process holds on the file and forget it, so the next
-        `embedded_store` for the path opens afresh. Every holder of this store sees it closed."""
+        """A HOLDER'S close is a no-op on the process's shared handle. Every `KnowledgeGraphBuilder` in
+        the process resolves to this one store, and several build-and-close callers exist
+        (`rename_concept_func` among them); if one of them closed the file, every other holder — the
+        worker's drain, the served operations — would read None until the process restarted. The
+        handle belongs to the process: `shutdown_embedded()` closes it, nothing else does."""
+        if _EMBEDDED.get(self._path) is self:
+            logger.debug("kuzu: close() on the process's shared store for %s is a no-op", self._path)
+            return
+        self._really_close()
+
+    def _really_close(self) -> None:
         self.closed = True
-        with _EMBEDDED_LOCK:
-            if _EMBEDDED.get(self._path) is self:
-                del _EMBEDDED[self._path]
         self._conn = None
         self._db = None
 
@@ -603,6 +609,17 @@ def embedded_store(db_path: str) -> "KuzuStore":
             store = KuzuStore(db_path)
             _EMBEDDED[key] = store
         return store
+
+
+def shutdown_embedded() -> int:
+    """Close every embedded store this process holds — at process exit, never from a caller that merely
+    finished using a `KnowledgeGraphBuilder`. Returns how many were closed."""
+    with _EMBEDDED_LOCK:
+        stores = list(_EMBEDDED.values())
+        _EMBEDDED.clear()
+    for store in stores:
+        store._really_close()
+    return len(stores)
 
 
 def resolve_backend() -> str:

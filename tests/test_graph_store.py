@@ -482,12 +482,17 @@ def test_ONE_PROCESS_HOLDS_ONE_EMBEDDED_STORE_PER_PATH():
         assert b.execute_query("MATCH (c:Wiki) RETURN c.n AS n", {}) == [{"n": "Shared_Handle"}]
         shared = a._store
         a.close()
-        assert shared.closed, "close did not mark the shared store closed"
+        assert not shared.closed, "a holder's close() closed the process's shared store under every other holder"
+        assert b.execute_query("MATCH (c:Wiki) RETURN c.n AS n", {}) == [{"n": "Shared_Handle"}], \
+            "the other holder lost the graph when one holder closed its builder"
+        from heaven_base.tool_utils.graph_store import shutdown_embedded
+        assert shutdown_embedded() >= 1   # other tests in this process may hold stores of their own
+        assert shared.closed, "shutdown did not close the shared store"
         fresh = KnowledgeGraphBuilder()
         fresh._ensure_connection()
         assert fresh._store is not shared and not fresh._store.closed, "a closed store was handed out again"
         assert fresh.execute_query("MATCH (c:Wiki) RETURN c.n AS n", {}) == [{"n": "Shared_Handle"}]
-        fresh.close()
+        shutdown_embedded()
     finally:
         for key, value in prev.items():
             if value is None:
