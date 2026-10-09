@@ -1,5 +1,34 @@
 """The graph backend behind KnowledgeGraphBuilder — `GRAPH_BACKEND=neo4j|kuzu`.
 
+THE EMBEDDED ENGINE IS LADYBUG, PINNED `ladybug==0.21.2`. Ladybug is the continuation of Kuzu
+(upstream Kuzu was archived at 0.11.3): same Cypher dialect, same Python API surface this file uses
+(`Database(path)`, `Connection(db)`, `execute(q, params)`, `has_next`, `get_next`,
+`get_column_names`), and the same error texts the schema-on-demand regexes parse. Only the import
+changed — `import ladybug`, never a fallback to `kuzu`, because a fallback would run an engine
+nobody pinned. The canonical record of the decision, the upgrade rule and the migration procedure
+is `application/carton-saas/kuzu-port/LADYBUG.md`.
+
+`GRAPH_BACKEND=kuzu` STAYS THE ONE VALUE, WITH NO `ladybug` ALIAS. The value names the backend —
+the embedded, single-writer, Kuzu-dialect graph this file adapts to — not the pip package that
+serves it, and every box, `system_config.sh` and test already says `kuzu`. An alias would be a
+second spelling of one choice, and `resolve_backend` exists so there is exactly one place and one
+word for it. The class names (`KuzuStore`, `KuzuHttpStore`) and the `KUZU_*` env names stay for
+the same reason.
+
+THREE LADYBUG LAWS THIS FILE ENFORCES, each pinned by a test in `tests/test_graph_store.py`:
+  1. CONNECTION RENEWAL. Ladybug's Python client caches a prepared statement per connection for
+     every parameterized query, keyed on (query text, parameter shape), and caches it even when
+     preparation FAILED. So after any schema change the connection is replaced — see
+     `KuzuStore._renew_connection`.
+  2. BOTH KEY SPELLINGS. Ladybug returns a node/rel/path dict's internal keys upper-case
+     (`_ID _LABEL _SRC _DST _NODES _RELS`); kuzu returned them lower-case. This file passes those
+     dicts through untouched (`_rows` reads column names only), so the law binds their READERS —
+     today one, `CartOnUtils._relationship_type_path` — which accept both spellings. A reader
+     that names one spelling gets an empty answer from the other engine, never an error.
+  3. NO READ-ONLY OPEN. A second process's `read_only` open SUCCEEDS on ladybug while the writer
+     holds the file, and serves a stale snapshot. `KUZU_READ_ONLY` therefore refuses; readers ask
+     the owner over `KuzuHttpStore`.
+
 WHY THIS FILE EXISTS, AND WHY IT IS HERE RATHER THAN IN carton-mcp. The carton-saas tenant box
 runs an embedded graph instead of a JVM sidecar (see application/carton-saas/kuzu-port/). The
 plan for that port named `CartOnUtils._execute_neo4j_query` as "the one execution point". It is
@@ -83,6 +112,13 @@ PROPERTY_TYPES = {
     "required_pattern": "STRING",
 }
 DEFAULT_PROPERTY_TYPE = "STRING"
+
+
+def _engine():
+    """The embedded engine module. Imported lazily so neo4j-only installs need no ladybug."""
+    import ladybug
+
+    return ladybug
 
 
 class GraphStore:
@@ -188,9 +224,9 @@ class Neo4jStore(GraphStore):
 
 
 class KuzuStore(GraphStore):
-    """The embedded backend — kuzu 0.11.3, pinned (upstream archived 2025-10-10, adapter-first).
+    """The embedded backend — ladybug, pinned `ladybug==0.21.2` (Kuzu's continuation).
 
-    Two things make carton's shape work on a schema-full engine:
+    Three things make carton's shape work on a schema-full engine:
 
     THE SCHEMA is created on open — the twelve measured columns plus one JSON `props` column for
     the unbounded scratch lane.
@@ -200,6 +236,14 @@ class KuzuStore(GraphStore):
     list that would be wrong the moment someone uses a new predicate, a query that fails on an
     unknown rel table gets that table created and is retried exactly once. The dialect probe
     proved runtime `CREATE REL TABLE` works (12/12, and it is the crux of the whole port).
+
+    THE CONNECTION IS RENEWED AFTER EVERY SCHEMA CHANGE. Ladybug's client keeps an implicit
+    prepared-statement cache per connection, keyed on (query text, parameter shape), and stores
+    the entry even when preparation FAILED. Retrying a parameterized query on the same connection
+    after the missing table or column was created replays the cached failure; a query that
+    succeeded before an `ALTER TABLE ... ADD` keeps its old plan and silently omits the new column
+    from `RETURN c`. A fresh connection has an empty cache, so `execute` opens one after any
+    schema fix and after any successful `CREATE|ALTER|DROP [NODE|REL] TABLE`.
     """
 
     # kuzu names what is missing in its error text; these pull it back out so it can be created.
@@ -220,22 +264,40 @@ class KuzuStore(GraphStore):
     _MISSING_NODE_TABLE = re.compile(
         r"Cannot bind (\w+) as a node pattern label", re.IGNORECASE)
 
-    def __init__(self, db_path: str, read_only: bool = False):
-        import kuzu
+    # A statement after which every cached plan on the connection may be wrong.
+    _SCHEMA_DDL = re.compile(r"^\s*(CREATE|ALTER|DROP)\s+(NODE\s+|REL\s+)?TABLE\b", re.IGNORECASE)
 
-        self._db = kuzu.Database(db_path, read_only=read_only)
-        self._conn = kuzu.Connection(self._db)
+    def __init__(self, db_path: str):
+        # NO read_only PARAMETER. The process that opens the file owns it and writes; any other
+        # process reads through KuzuHttpStore. A read_only open from a second process succeeds on
+        # ladybug and serves a stale snapshot, so it is not offered at all (see make_store).
+        engine = _engine()
+        self._engine = engine
+        self._db = engine.Database(db_path)
+        self._conn = engine.Connection(self._db)
         # REENTRANT deliberately: the read-modify-write property paths hold the lock across
         # several `execute` calls, and `execute` takes it too. A plain Lock deadlocks there.
         self._lock = threading.RLock()
         self._known_rel_tables: set[str] = set()
-        if not read_only:
-            self._ensure_schema()
+        self._ensure_schema()
 
     def _ensure_schema(self) -> None:
         cols = ", ".join(f"{name} {ktype}" for name, ktype in WIKI_FIXED_COLUMNS)
         self._conn.execute(
             f"CREATE NODE TABLE IF NOT EXISTS Wiki({cols}, PRIMARY KEY (n))")
+        self._renew_connection()
+
+    def _renew_connection(self) -> None:
+        """Replace the connection, dropping its prepared-statement cache with it.
+
+        Closing the old one is what frees the cached statements (ladybug's `close` destroys each
+        cached C++ prepared statement); dropping the reference alone leaks them.
+        """
+        old, self._conn = self._conn, self._engine.Connection(self._db)
+        try:
+            old.close()
+        except Exception as exc:  # noqa: BLE001 - the new connection is already in place
+            logger.debug("kuzu: closing the replaced connection failed: %s", exc)
 
     def _create_rel_table(self, rel_type: str) -> bool:
         """Declare a relationship table. Returns True if it now exists."""
@@ -360,17 +422,27 @@ class KuzuStore(GraphStore):
         query = self._translate(query)
         if query is None:
             return []
+        is_ddl = bool(self._SCHEMA_DDL.match(query))
         with self._lock:
             applied: set = set()
             for _ in range(self._MAX_SCHEMA_FIXES + 1):
                 try:
-                    return self._rows(self._conn.execute(query, params or {}))
+                    rows = self._rows(self._conn.execute(query, params or {}))
+                    if is_ddl:
+                        self._renew_connection()
+                    return rows
                 except Exception as exc:
                     fix = self._schema_fix_for(str(exc), query)
                     if fix is None or fix in applied:
                         raise
                     applied.add(fix)
-            return self._rows(self._conn.execute(query, params or {}))
+                    # The failed prepare is cached on this connection under this exact
+                    # (query, parameter shape); retrying here would replay it.
+                    self._renew_connection()
+            rows = self._rows(self._conn.execute(query, params or {}))
+            if is_ddl:
+                self._renew_connection()
+            return rows
 
     def _schema_fix_for(self, message: str, query: str) -> Optional[str]:
         """Apply the one schema addition this error asks for; return its id, or None."""
@@ -485,9 +557,10 @@ class KuzuStore(GraphStore):
 class KuzuHttpStore(GraphStore):
     """kuzu reached over localhost HTTP, because the file can only be held by ONE process.
 
-    WHY THIS EXISTS. kuzu is embedded: the process that opens the database directory holds it,
-    and it locks the file even against a read_only open from elsewhere. carton is not one
-    process — the MCP server, the worker daemon and every agent's stdio subprocess all read the
+    WHY THIS EXISTS. The engine is embedded: the process that opens the database directory holds
+    it, a second read-write open is refused by the file lock, and a second read_only open is
+    either refused (kuzu 0.11.3) or — on ladybug — allowed and served a stale snapshot. carton is
+    not one process — the MCP server, the worker daemon and every agent's stdio subprocess all read the
     graph. Under neo4j they each opened a bolt connection to a shared server; under kuzu exactly
     one process can own the file, so everybody else has to ASK it. That process is the worker,
     which is also the only writer, and this is the client the others use.
@@ -600,8 +673,9 @@ def make_store(uri: str, user: str, password: str) -> GraphStore:
         return Neo4jStore(uri, user, password)
     if backend == "kuzu":
         # ASK BEFORE OPEN. A process told where the endpoint is must never open the file, even
-        # if it also knows the path — kuzu locks the directory, so a second opener does not get
-        # a degraded view, it gets a failure or a stale one (see Kuzu_Handle_Visibility_Boundary).
+        # if it also knows the path — the owner holds the directory, so a second opener does not
+        # get a live view, it gets a lock failure or a stale snapshot (see
+        # Kuzu_Handle_Visibility_Boundary).
         query_url = os.environ.get("KUZU_QUERY_URL")
         if query_url:
             # THE TIMEOUT IS CONFIGURABLE BECAUSE NOT EVERY CALLER IS INTERACTIVE. 30s is right
@@ -611,16 +685,30 @@ def make_store(uri: str, user: str, password: str) -> GraphStore:
             # succeeding. Measured 2026-08-17: a code-graph parse wrote 461 nodes and then hit
             # the 30s ceiling on one statement that completes in 0.1s on its own.
             return KuzuHttpStore(query_url, timeout=_env_float("KUZU_QUERY_TIMEOUT_S", 30.0))
+        # ⛔ A READ-ONLY OPEN IS REFUSED, NOT IGNORED. On ladybug a second process's read_only
+        # open succeeds while the worker holds the file and answers from a snapshot that never
+        # sees the worker's later writes — every read looks healthy and is stale. Ignoring the
+        # variable instead would open the file read-write, which the lock refuses. Either way
+        # the setting cannot do what it says, so it stops the process and names the way that
+        # works: the owner's endpoint.
+        if _env_true("KUZU_READ_ONLY"):
+            raise ValueError(
+                "KUZU_READ_ONLY is not supported: a second process's read_only open serves a "
+                "stale snapshot on ladybug. Set KUZU_QUERY_URL to the worker's query endpoint "
+                "instead (the worker owns the database file; every other process reads through "
+                "KuzuHttpStore)."
+            )
         db_path = os.environ.get("KUZU_DB_PATH")
         if not db_path:
             raise ValueError(
                 "GRAPH_BACKEND=kuzu requires KUZU_DB_PATH (the embedded database's directory). "
                 "Under the single-writer design the worker process owns that file exclusively — "
-                "kuzu locks it even against read_only opens from another process."
+                "every other process reads through KuzuHttpStore (KUZU_QUERY_URL)."
             )
-        return KuzuStore(db_path, read_only=_env_true("KUZU_READ_ONLY"))
+        return KuzuStore(db_path)
     raise ValueError(
-        f"unknown GRAPH_BACKEND {backend!r}; expected 'neo4j' or 'kuzu'"
+        f"unknown GRAPH_BACKEND {backend!r}; expected 'neo4j' or 'kuzu' "
+        "('kuzu' is the embedded engine, served by the ladybug package)"
     )
 
 

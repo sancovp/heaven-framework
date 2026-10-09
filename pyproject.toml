@@ -56,6 +56,12 @@ google = [
     "google-genai==1.73.1",
     "google-adk==1.31.1",
 ]
+kuzu = [
+    # The embedded graph engine behind GRAPH_BACKEND=kuzu (tool_utils/graph_store.py). Ladybug is
+    # Kuzu's continuation. EXACT pin, never a range: an upgrade is export → import → re-run the
+    # probes (application/carton-saas/kuzu-port/LADYBUG.md). Optional — neo4j installs need none.
+    "ladybug==0.21.2",
+]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",

@@ -16,9 +16,12 @@ expensive to get wrong:
    claim: `_serialize_record` treats a plain dict exactly as it treats a neo4j Record. If that is
    false, every MCP read silently changes shape. It is asserted here rather than assumed.
 
-The kuzu cases need `kuzu==0.11.3` installed; they SKIP loudly if it is absent rather than
-passing vacuously — a skipped test that reads as green is the failure mode this whole port has
-been correcting.
+The embedded cases need the engine the seam imports — `ladybug==0.21.2`. They SKIP loudly if it
+is absent rather than passing vacuously (a real pytest skip under pytest, a SKIP line as a script)
+— a skipped test that reads as green is the failure mode this whole port has been correcting. The
+same suite runs against the frozen kuzu 0.11.3 reference through the shim in
+`application/carton-saas/kuzu-port/ladybug-probes/reference_shim/`; `test_ENGINE_UNDER_TEST`
+prints which engine a run proved.
 """
 import os
 import shutil
@@ -56,11 +59,30 @@ def check(name, fn):
 
 
 def has_kuzu():
+    """Whether the engine the seam imports (`ladybug`) is installed."""
     try:
-        import kuzu  # noqa: F401
+        from heaven_base.tool_utils.graph_store import _engine
+        _engine()
         return True
     except ImportError:
         return False
+
+
+def _skip(reason="the embedded engine (ladybug) is not installed"):
+    """A REAL skip under pytest (it shows as `s`, never as a pass); the "skip" marker as a script."""
+    if "pytest" in sys.modules:
+        import pytest
+        pytest.skip(reason)
+    return "skip"
+
+
+def test_ENGINE_UNDER_TEST():
+    """Names the engine this run proved, in the output, so a green run says what it was green ON."""
+    if not has_kuzu():
+        return _skip()
+    from heaven_base.tool_utils.graph_store import _engine
+    eng = _engine()
+    print(f"ENGINE {eng.__name__} {eng.__version__}")
 
 
 # --------------------------------------------------------------------------- #
@@ -234,7 +256,7 @@ def test_the_fixed_columns_are_the_twelve_that_were_measured():
 
 def _with_kuzu(fn):
     if not has_kuzu():
-        return "skip"
+        return _skip()
     tmp = tempfile.mkdtemp(prefix="kuzu_gate_")
     try:
         store = KuzuStore(os.path.join(tmp, "db"))
@@ -297,7 +319,7 @@ def test_kuzu_raises_on_a_genuinely_bad_query_rather_than_returning_no_rows():
 def test_the_builder_on_kuzu_has_no_driver_but_still_answers():
     """A driverless backend must be a first-class citizen of the class, not a special case."""
     if not has_kuzu():
-        return "skip"
+        return _skip()
     from heaven_base.tool_utils.neo4j_utils import KnowledgeGraphBuilder
 
     tmp = tempfile.mkdtemp(prefix="kuzu_builder_")
@@ -320,6 +342,111 @@ def test_the_builder_on_kuzu_has_no_driver_but_still_answers():
             else:
                 os.environ[key] = val
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------- #
+# 5b. ⛔ THE LADYBUG LAWS — connection renewal, and no read-only open
+#
+# Ladybug's Python client caches a prepared statement per connection for every PARAMETERIZED
+# query, keyed on (query text, parameter shape), and caches it even when preparation FAILED. The
+# schema-on-demand retry in `KuzuStore.execute` re-runs the SAME query with the SAME params after
+# creating the missing table or column — so on a connection that is not renewed, the retry
+# replays the cached failure. Every case below passes on kuzu 0.11.3 with or without renewal
+# (kuzu had no implicit cache) and FAILS on ladybug 0.21.2 without it. Each uses PARAMETERS on
+# purpose: a literal-only query is not cached, and would pass without the fix.
+# --------------------------------------------------------------------------- #
+
+def test_ladybug_DYNAMIC_REL_TYPE_MERGE_with_params_lands_after_its_table_is_created():
+    """carton mints rel types at runtime; the first MERGE of a new type must land, params and all."""
+    def body(store):
+        store.execute("MERGE (c:Wiki {n: $n}) ON CREATE SET c.linked = false", {"n": "Dyn_A"})
+        store.execute("MERGE (c:Wiki {n: $n}) ON CREATE SET c.linked = false", {"n": "Dyn_B"})
+        store.execute(
+            "MATCH (a:Wiki {n: $a}), (b:Wiki {n: $b}) MERGE (a)-[r:HAS_THING]->(b)",
+            {"a": "Dyn_A", "b": "Dyn_B"})
+        rows = store.execute("MATCH (a:Wiki)-[:HAS_THING]->(b:Wiki) RETURN a.n AS a, b.n AS b", {})
+        assert rows == [{"a": "Dyn_A", "b": "Dyn_B"}], rows
+        return None
+    return _with_kuzu(body)
+
+
+def test_ladybug_SET_a_NEW_REL_PROPERTY_with_params_lands_after_its_column_is_added():
+    """The daemon's `SET r.ts = ...` on an edge type that has never carried `ts`."""
+    def body(store):
+        store.execute("CREATE (a:Wiki {n: 'Rp_A', linked: false})", {})
+        store.execute("CREATE (b:Wiki {n: 'Rp_B', linked: false})", {})
+        store.execute("MATCH (a:Wiki {n:'Rp_A'}), (b:Wiki {n:'Rp_B'}) MERGE (a)-[:HAS_THING]->(b)", {})
+        store.execute(
+            "MATCH (a:Wiki {n: $a})-[r:HAS_THING]->(b:Wiki {n: $b}) SET r.reason = $why",
+            {"a": "Rp_A", "b": "Rp_B", "why": "because"})
+        rows = store.execute("MATCH (:Wiki)-[r:HAS_THING]->(:Wiki) RETURN r.reason AS why", {})
+        assert rows == [{"why": "because"}], rows
+        return None
+    return _with_kuzu(body)
+
+
+def test_ladybug_SET_PROPERTIES_with_a_NEW_node_property_lands():
+    """`set_properties` is parameterized by construction, so every new scratch key hits the cache."""
+    def body(store):
+        store.execute("CREATE (c:Wiki {n: 'Np_A', linked: false})", {})
+        store.set_properties("Np_A", {"status": "locked"})
+        rows = store.execute("MATCH (c:Wiki {n: 'Np_A'}) RETURN c.status AS st", {})
+        assert rows == [{"st": "locked"}], rows
+        return None
+    return _with_kuzu(body)
+
+
+def test_ladybug_SET_PROPERTIES_with_a_SECOND_new_node_property_lands_too():
+    """A second, different new key after the first succeeded — each new column is its own miss."""
+    def body(store):
+        store.execute("CREATE (c:Wiki {n: 'Np_B', linked: false})", {})
+        store.set_properties("Np_B", {"status": "locked"})
+        store.set_properties("Np_B", {"equipped_sm_id": "sm_1", "sm_chain_index": 0})
+        rows = store.execute(
+            "MATCH (c:Wiki {n: 'Np_B'}) RETURN c.status AS st, c.equipped_sm_id AS sm, "
+            "c.sm_chain_index AS ix", {})
+        assert rows == [{"st": "locked", "sm": "sm_1", "ix": 0}], rows
+        return None
+    return _with_kuzu(body)
+
+
+def test_ladybug_a_plan_cached_BEFORE_an_ALTER_does_not_hide_the_new_column():
+    """The silent one: a query that SUCCEEDED before `ALTER TABLE ... ADD` keeps its old plan on a
+    connection that is not renewed, and `RETURN c` comes back without the new column — no error."""
+    def body(store):
+        store.execute("CREATE (c:Wiki {n: 'Stale_A', linked: false})", {})
+        before = store.execute("MATCH (c:Wiki {n: $n}) RETURN c", {"n": "Stale_A"})[0]["c"]
+        assert "tk_lane" not in before, before
+        store.execute("ALTER TABLE Wiki ADD IF NOT EXISTS tk_lane STRING", {})
+        after = store.execute("MATCH (c:Wiki {n: $n}) RETURN c", {"n": "Stale_A"})[0]["c"]
+        assert "tk_lane" in after, f"the plan cached before the ALTER is still in use: {sorted(after)}"
+        return None
+    return _with_kuzu(body)
+
+
+def test_KUZU_READ_ONLY_REFUSES_and_names_the_endpoint():
+    """A second process's read_only open succeeds on ladybug and serves a stale snapshot, so the
+    setting refuses rather than open anything — and says what to do instead."""
+    prev = {k: os.environ.get(k) for k in ("GRAPH_BACKEND", "KUZU_READ_ONLY", "KUZU_DB_PATH", "KUZU_QUERY_URL")}
+    os.environ.update(GRAPH_BACKEND="kuzu", KUZU_READ_ONLY="1", KUZU_DB_PATH="/nonexistent/never-opened")
+    os.environ.pop("KUZU_QUERY_URL", None)
+    try:
+        make_store("", "", "")
+        raise AssertionError("KUZU_READ_ONLY opened a store instead of refusing")
+    except ValueError as exc:
+        assert "KUZU_QUERY_URL" in str(exc) and "stale" in str(exc), exc
+    finally:
+        for key, value in prev.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def test_KuzuStore_offers_NO_read_only_open():
+    import inspect
+    assert "read_only" not in inspect.signature(KuzuStore.__init__).parameters, \
+        "KuzuStore takes read_only again — a second-process read_only open serves a stale snapshot"
 
 
 # --------------------------------------------------------------------------- #
@@ -371,7 +498,7 @@ def test_a_scratch_write_does_not_DEADLOCK_on_its_own_lock():
     Run in a thread with a join timeout so a regression FAILS instead of hanging the suite.
     """
     if not has_kuzu():
-        return "skip"
+        return _skip()
     import threading
 
     done, error = [], []
@@ -454,8 +581,8 @@ SET n.region = coalesce(c.region, n.region, 'soup')
 
 
 def test_kuzu_runs_THE_DAEMONS_ACTUAL_NODE_WRITE_verbatim():
-    """The load-bearing assumption of the whole port — SCOPING.md says the ~62 write-Cypher
-    strings "stay put; execution routes through the adapter" — asserted against the real query
+    """The load-bearing assumption of the whole port — carton's write-Cypher strings stay put and
+    execution routes through the seam (kuzu-port/LADYBUG.md) — asserted against the real query
     rather than a synthetic MERGE. It exercises UNWIND over a param list of maps, MERGE, ON CREATE
     SET, a multi-branch CASE inside SET, CONTAINS, string concatenation, coalesce, and both forms
     of datetime() in one statement."""
@@ -482,22 +609,26 @@ def test_kuzu_runs_THE_DAEMONS_ACTUAL_NODE_WRITE_verbatim():
     return _with_kuzu(body)
 
 
-def test_an_escaped_newline_in_a_CYPHER_LITERAL_is_silently_eaten_by_kuzu():
-    """⛔ THE SILENT ONE. This is why the daemon's separator had to become a parameter.
+def test_an_escaped_newline_in_a_CYPHER_LITERAL_is_ENGINE_DEPENDENT():
+    """⛔ THE SILENT ONE. This is why the daemon's separator is a parameter, and stays one.
 
     neo4j processes backslash escapes inside a string literal, so `'\\n\\n---\\n\\n'` in the query
     text is two newlines, a rule, and two newlines. kuzu 0.11.3 does NOT — it drops the
-    backslashes and keeps the letters. The separator would have become `nn---nn` and EVERY
-    appended concept description would have been quietly corrupted, with no error raised anywhere
-    and nothing in any log to notice.
+    backslashes and keeps the letters, so the separator would have become `nn---nn` and EVERY
+    appended concept description would have been quietly corrupted, with no error anywhere.
+    ladybug 0.21.2 processes them, as neo4j does.
 
-    Pinned as a characterisation test: it asserts the DIFFERENCE exists, so that if a future kuzu
-    version starts processing escapes this fails and tells us the constraint changed, and so that
-    nobody "tidies" the parameter back into a literal.
+    Pinned PER ENGINE as a characterisation test: if either engine's behaviour moves, this fails
+    and says so. The parameter stays regardless — one literal means three different strings across
+    the three engines carton has run on, and the frozen reference still eats the escapes.
     """
+    from heaven_base.tool_utils.graph_store import _engine
+    expected = {"kuzu": "annb", "ladybug": "a\n\nb"}
+
     def body(store):
-        eaten = store.execute(r"RETURN 'a\n\nb' AS v", {})[0]["v"]
-        assert eaten == "annb", f"kuzu escape behaviour changed: {eaten!r}"
+        name = _engine().__name__
+        got = store.execute(r"RETURN 'a\n\nb' AS v", {})[0]["v"]
+        assert got == expected[name], f"{name}'s escape behaviour changed: {got!r}"
         # The two shapes that DO survive: a parameter (what the daemon now uses)...
         assert store.execute("RETURN $s AS v", {"s": "a\n\nb"})[0]["v"] == "a\n\nb"
         # ...and a real newline inside the query text.
@@ -710,19 +841,6 @@ def test_toString_TRANSLATES_but_the_RENDERED_FORMAT_DIFFERS_and_that_is_recorde
     return _with_kuzu(body)
 
 
-if __name__ == "__main__":
-    print("graph store gate\n")
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            check(name, fn)
-    print(f"\n{len(PASSED)} passed, {len(FAILED)} failed, {len(SKIPPED)} skipped")
-    if SKIPPED:
-        print("SKIPPED (these are NOT passes):")
-        for s in SKIPPED:
-            print(f"  - {s}")
-    sys.exit(1 if FAILED else 0)
-
-
 def test_the_table_a_property_is_added_to_is_READ_FROM_THE_PATTERN_not_assumed():
     """A schema fix must land on the table the query names, and carton is no longer alone here.
 
@@ -784,3 +902,16 @@ def test_a_missing_NODE_table_is_REFUSED_not_created_as_a_relationship():
                                 "MATCH (a:Wiki),(b:Wiki) MERGE (a)-[:FOLLOWS_PATTERN]->(b)")
     assert fix == "table:FOLLOWS_PATTERN", fix
     assert probe.created == ["FOLLOWS_PATTERN"], probe.created
+
+
+if __name__ == "__main__":
+    print("graph store gate\n")
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            check(name, fn)
+    print(f"\n{len(PASSED)} passed, {len(FAILED)} failed, {len(SKIPPED)} skipped")
+    if SKIPPED:
+        print("SKIPPED (these are NOT passes):")
+        for s in SKIPPED:
+            print(f"  - {s}")
+    sys.exit(1 if FAILED else 0)
