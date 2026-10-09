@@ -356,6 +356,23 @@ def test_the_builder_on_kuzu_has_no_driver_but_still_answers():
 # purpose: a literal-only query is not cached, and would pass without the fix.
 # --------------------------------------------------------------------------- #
 
+def test_a_MISSING_NODE_LABEL_never_becomes_a_REL_TABLE():
+    """`MATCH (r:Rule ...)` on an undeclared node label fails as "Table Rule does not exist" — the
+    same text a missing rel type gives. The fix must NOT answer it by creating `REL TABLE Rule`:
+    the error is re-raised, and `show_tables()` lists no table named Rule afterwards."""
+    def body(store):
+        import pytest as _pytest
+        with _pytest.raises(Exception) as excinfo:
+            store.execute("MATCH (r:Rule {n: $n}) RETURN r.n AS n", {"n": "x"})
+        assert "Rule" in str(excinfo.value), str(excinfo.value)
+        names = [row[0] if isinstance(row, (list, tuple)) else row
+                 for row in store._conn.execute("CALL show_tables() RETURN *").get_all()]
+        assert not any(str(n) == "Rule" for n in names), names
+        assert "Rule" not in store._known_rel_tables
+        return None
+    return _with_kuzu(body)
+
+
 def test_ladybug_DYNAMIC_REL_TYPE_MERGE_with_params_lands_after_its_table_is_created():
     """carton mints rel types at runtime; the first MERGE of a new type must land, params and all."""
     def body(store):

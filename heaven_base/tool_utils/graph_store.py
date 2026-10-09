@@ -455,8 +455,18 @@ class KuzuStore(GraphStore):
             return None
 
         table = self._missing_table_name(message)
-        if table and table not in self._known_rel_tables and self._create_rel_table(table):
-            return f"table:{table}"
+        if table and table not in self._known_rel_tables:
+            # A missing NODE label fails first as "Table X does not exist" too — the same text a
+            # missing rel type gives — and only a retry would reach the node-label guard above. By
+            # then a REL table named like the label exists, wrongly and for good. So read the query:
+            # a name bound as `(x:X` and never as `[r:X` is a node label, and gets no rel table.
+            if self._used_as_node_label(query, table):
+                logger.warning(
+                    "kuzu: %r is used as a NODE label in this query, not a rel type; no rel table "
+                    "is created for it. Declare the node table first.", table)
+                return None
+            if self._create_rel_table(table):
+                return f"table:{table}"
 
         m = self._MISSING_PROPERTY.search(message)
         if m:
@@ -465,6 +475,13 @@ class KuzuStore(GraphStore):
             if owner and self._add_property(owner, prop):
                 return f"prop:{owner}.{prop}"
         return None
+
+    @staticmethod
+    def _used_as_node_label(query: str, name: str) -> bool:
+        """True when `name` is bound only as a node label — `(x:Name` — and never as a rel type `[r:Name`."""
+        as_node = re.search(rf"\(\s*\w*\s*:\s*{re.escape(name)}\b", query) is not None
+        as_rel = re.search(rf"\[\s*\w*\s*:\s*{re.escape(name)}\b", query) is not None
+        return as_node and not as_rel
 
     @staticmethod
     def _table_for_variable(query: str, variable: str) -> Optional[str]:
